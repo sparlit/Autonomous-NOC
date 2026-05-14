@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.endpoints import monitoring, alerts
+from app.api.endpoints import monitoring, alerts, terminal
 from app.core.config import settings
 
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -15,6 +15,7 @@ app.add_middleware(
 
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["monitoring"])
 app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])
+app.include_router(terminal.router, prefix="/api/terminal", tags=["terminal"])
 
 @app.get("/health")
 async def health_check():
