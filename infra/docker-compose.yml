@@ -40,5 +40,18 @@ services:
       - "9116:9116"
     restart: unless-stopped
 
+  backend:
+    build:
+      context: ../backend
+    container_name: noc-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - KEEP_URL=http://keep:8080
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   prometheus_data:
