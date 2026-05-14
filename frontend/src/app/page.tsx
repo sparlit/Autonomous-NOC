@@ -3,6 +3,9 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity, AlertCircle, Server, Globe } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import NetworkLatencyChart from "@/components/charts/NetworkLatencyChart";
+import ThroughputChart from "@/components/charts/ThroughputChart";
+import DeviceStatusChart from "@/components/charts/DeviceStatusChart";
 
 const fetchStatus = async () => {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/monitoring/status`);
@@ -99,15 +102,13 @@ export default function Home() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
         <Card className="col-span-4 bg-zinc-900/50 border-zinc-800">
           <CardHeader>
-            <CardTitle>Network Overview</CardTitle>
+            <CardTitle>Network Latency</CardTitle>
             <CardDescription>
-              Real-time network performance across all regions.
+              Last 30 minutes of ICMP response times.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-[300px] w-full flex items-center justify-center border-2 border-dashed border-zinc-800 rounded-lg">
-               <span className="text-zinc-500">Metrics Chart Placeholder (ECharts integration coming next)</span>
-            </div>
+            <NetworkLatencyChart />
           </CardContent>
         </Card>
         <Card className="col-span-3 bg-zinc-900/50 border-zinc-800">
@@ -133,6 +134,27 @@ export default function Home() {
                 ))
               )}
             </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
+        <Card className="bg-zinc-900/50 border-zinc-800">
+          <CardHeader>
+            <CardTitle>Throughput</CardTitle>
+            <CardDescription>Real-time inbound and outbound traffic.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ThroughputChart />
+          </CardContent>
+        </Card>
+        <Card className="bg-zinc-900/50 border-zinc-800">
+          <CardHeader>
+            <CardTitle>Device Status</CardTitle>
+            <CardDescription>Inventory health overview.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DeviceStatusChart />
           </CardContent>
         </Card>
       </div>
