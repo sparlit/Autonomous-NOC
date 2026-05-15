@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from nanoc.core.llm import LLMProvider
 from nanoc.memory.memory import Memory
+from nanoc.tools.network import DiagnosticTools, DiscoveryTool
 
 class BaseAgent:
     def __init__(self, agent_id: str, role: str, memory: Memory, provider: Optional[LLMProvider] = None):
@@ -12,18 +13,39 @@ class BaseAgent:
         self.memory = memory
         self.llm = provider or LLMProvider()
         self.tools = {}
+        self._register_default_tools()
+
+    def _register_default_tools(self):
+        self.register_tool("ping", DiagnosticTools.ping)
+        self.register_tool("traceroute", DiagnosticTools.traceroute)
+        self.register_tool("discover_topology", DiscoveryTool.discover_topology)
 
     async def log(self, content: str):
         print(f"[{self.role}] {content}")
         self.memory.add_log(self.agent_id, content)
+        self.memory.publish_event("agent/log", {
+            "agent_id": self.agent_id,
+            "role": self.role,
+            "content": content
+        })
 
     async def think(self, prompt: str, use_tools: bool = False) -> str:
+        self.memory.publish_event("agent/thought/start", {
+            "agent_id": self.agent_id,
+            "role": self.role,
+            "prompt": prompt[:500]
+        })
         system_prompt = f"You are {self.agent_id}, a {self.role} in the NANOC team. Work autonomously and flawlessly."
         if use_tools and self.tools:
             tool_desc = "\n".join([f"- {name}: {func.__doc__}" for name, func in self.tools.items()])
             system_prompt += f"\nYou have access to these tools:\n{tool_desc}\nTo use a tool, output: ACTION: tool_name ARGS: your_args"
 
         response = await self.llm.complete(prompt, system_prompt)
+        self.memory.publish_event("agent/thought/complete", {
+            "agent_id": self.agent_id,
+            "role": self.role,
+            "response": response[:1000]
+        })
         await self.log(f"Thought: {response[:100]}...")
 
         if use_tools and "ACTION:" in response:

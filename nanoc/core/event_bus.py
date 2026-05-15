@@ -37,12 +37,18 @@ class EventBus:
 
                 # Pattern match (simple prefix for now, e.g. project/*)
                 for sub_topic in self.subscribers:
-                    if sub_topic.endswith('*') and topic.startswith(sub_topic[:-1]):
+                    if sub_topic == "*" or (sub_topic.endswith('*') and topic.startswith(sub_topic[:-1])):
+                        # Inject topic into payload for subscribers that need it
+                        rich_payload = payload.copy()
+                        rich_payload["_topic"] = topic
+                        rich_payload["_event_id"] = event['id']
+                        rich_payload["_timestamp"] = event['timestamp']
+
                         for cb in self.subscribers[sub_topic]:
                             if asyncio.iscoroutinefunction(cb):
-                                await cb(payload)
+                                await cb(rich_payload)
                             else:
-                                cb(payload)
+                                cb(rich_payload)
 
             await asyncio.sleep(interval)
 

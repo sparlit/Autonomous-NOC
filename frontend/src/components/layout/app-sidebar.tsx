@@ -41,15 +41,11 @@ const data = {
       items: [
         {
           title: "Network Metrics",
-          url: "#",
+          url: "/",
         },
         {
-          title: "Server Health",
-          url: "#",
-        },
-        {
-          title: "Service Status",
-          url: "#",
+          title: "Agent Operations",
+          url: "/agents",
         },
       ],
     },
@@ -75,7 +71,7 @@ const data = {
       items: [
         {
           title: "Topology Map",
-          url: "#",
+          url: "/topology",
         },
         {
           title: "Device Inventory",
@@ -89,8 +85,8 @@ const data = {
       icon: Database,
       items: [
         {
-          title: "Workflows",
-          url: "#",
+          title: "Task Board",
+          url: "/tasks",
         },
         {
           title: "Action Logs",
@@ -124,16 +120,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
-              <a href="#">
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <Shield className="size-4" />
-                </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">Autonomous NOC</span>
-                  <span className="truncate text-xs">System Administrator</span>
-                </div>
-              </a>
+            <SidebarMenuButton size="lg">
+              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                <Shield className="size-4" />
+              </div>
+              <div className="grid flex-1 text-left text-sm leading-tight">
+                <span className="truncate font-semibold">Autonomous NOC</span>
+                <span className="truncate text-xs">System Administrator</span>
+              </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -154,10 +148,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   <SidebarMenuSub>
                     {item.items.map((subItem) => (
                       <SidebarMenuSubItem key={subItem.title}>
-                        <SidebarMenuSubButton asChild>
-                          <a href={subItem.url}>
-                            <span>{subItem.title}</span>
-                          </a>
+                        <SidebarMenuSubButton href={subItem.url}>
+                          {subItem.title}
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
                     ))}

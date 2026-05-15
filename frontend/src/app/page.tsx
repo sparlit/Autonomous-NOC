@@ -1,20 +1,22 @@
 'use client'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, AlertCircle, Server, Globe } from "lucide-react";
+import { Activity, AlertCircle, Server, Globe, Clock } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import NetworkLatencyChart from "@/components/charts/NetworkLatencyChart";
 import ThroughputChart from "@/components/charts/ThroughputChart";
 import DeviceStatusChart from "@/components/charts/DeviceStatusChart";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
 const fetchStatus = async () => {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/monitoring/status`);
+  const res = await fetch(`${API_URL}/api/monitoring/status`);
   if (!res.ok) throw new Error("Failed to fetch status");
   return res.json();
 };
 
 const fetchAlertsSummary = async () => {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/alerts/summary`);
+  const res = await fetch(`${API_URL}/api/alerts/summary`);
   if (!res.ok) throw new Error("Failed to fetch alerts summary");
   return res.json();
 };
@@ -40,6 +42,9 @@ export default function Home() {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold text-zinc-100">Executive Overview</h1>
+      </div>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="bg-zinc-900/50 border-zinc-800">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -85,15 +90,15 @@ export default function Home() {
         </Card>
         <Card className="bg-zinc-900/50 border-zinc-800">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Global Traffic</CardTitle>
-            <Globe className="h-4 w-4 text-blue-500" />
+            <CardTitle className="text-sm font-medium">Task Backlog</CardTitle>
+            <Clock className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-500">
-              {statusLoading ? "..." : status?.traffic}
+              {statusLoading ? "..." : status?.backlog}
             </div>
             <p className="text-xs text-muted-foreground">
-              +15% from last hour
+              Pending autonomous actions
             </p>
           </CardContent>
         </Card>

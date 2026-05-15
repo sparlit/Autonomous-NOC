@@ -82,6 +82,16 @@ class Memory:
             conn.commit()
             return cursor.lastrowid
 
+    def get_metrics(self, name: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            if name:
+                cursor.execute('SELECT * FROM metrics WHERE metric_name = ? ORDER BY timestamp DESC LIMIT ?', (name, limit))
+            else:
+                cursor.execute('SELECT * FROM metrics ORDER BY timestamp DESC LIMIT ?', (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_events(self, topic: Optional[str] = None, since_id: int = 0) -> List[Dict[str, Any]]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
