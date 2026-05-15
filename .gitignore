@@ -1,1 +1,8 @@
-backend/venv/
+__pycache__/
+*.pyc
+nanoc/memory/*.db
+nanoc/logs/*.txt
+nanoc/workspace/
+nanoc/staging/
+nanoc_backup/
+.env
