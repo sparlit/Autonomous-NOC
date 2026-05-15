@@ -1,0 +1,6 @@
+interface:
+  display_name: "Autonomous NOC"
+  short_description: "Repo-specific patterns and workflows for Autonomous-NOC"
+  default_prompt: "Use the Autonomous-NOC repo skill to follow existing architecture, testing, and workflow conventions."
+policy:
+  allow_implicit_invocation: true
