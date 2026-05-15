@@ -33,15 +33,22 @@ class EventBus:
             for event in new_events:
                 self.last_seen_id = max(self.last_seen_id, event['id'])
                 topic = event['topic']
-                payload = json.loads(event['payload'])
+                try:
+                    payload = json.loads(event['payload'])
+                except Exception as e:
+                    print(f"[EventBus] Error decoding payload for topic {topic}: {e}")
+                    continue
 
                 # Direct match
                 if topic in self.subscribers:
                     for cb in self.subscribers[topic]:
-                        if asyncio.iscoroutinefunction(cb):
-                            await cb(payload)
-                        else:
-                            cb(payload)
+                        try:
+                            if asyncio.iscoroutinefunction(cb):
+                                await cb(payload)
+                            else:
+                                cb(payload)
+                        except Exception as e:
+                            print(f"[EventBus] Error in direct callback for {topic}: {e}")
 
                 # Pattern match (simple prefix for now, e.g. project/*)
                 for sub_topic in self.subscribers:
@@ -53,10 +60,13 @@ class EventBus:
                         rich_payload["_timestamp"] = event['timestamp']
 
                         for cb in self.subscribers[sub_topic]:
-                            if asyncio.iscoroutinefunction(cb):
-                                await cb(rich_payload)
-                            else:
-                                cb(rich_payload)
+                            try:
+                                if asyncio.iscoroutinefunction(cb):
+                                    await cb(rich_payload)
+                                else:
+                                    cb(rich_payload)
+                            except Exception as e:
+                                print(f"[EventBus] Error in callback for {sub_topic}: {e}")
 
             await asyncio.sleep(interval)
 

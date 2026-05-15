@@ -139,6 +139,11 @@ class Architect(BaseAgent):
 
         # Extract project_id from requirements or context (simplified here)
         project_id = requirements.split(":")[0] if ":" in requirements else "unknown"
+        if project_id.startswith("proj_") == False:
+            # Fallback for tasks that might not have the prefix if not formatted correctly
+            # In a real system we would use a more robust task/project context
+            pass
+
         from nanoc.core.gate_manager import GateManager
         gm = GateManager(self.memory)
         gate_id = gm.get_active_gate(project_id)

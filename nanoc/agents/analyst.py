@@ -8,6 +8,7 @@ class Analyst(BaseAgent):
         super().__init__(agent_id, "Analyst", memory)
 
     async def analyze_failure(self, failure_event: Dict[str, Any]):
+        from nanoc.memory.memory import Memory
         project_id = failure_event.get("project_id", "unknown")
         await self.log(f"Analyzing failure for project {project_id}: {failure_event.get('error')}")
         error_msg = failure_event.get('error', 'Unknown error')
