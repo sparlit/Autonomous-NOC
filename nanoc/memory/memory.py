@@ -25,6 +25,7 @@ class Memory:
                 CREATE TABLE IF NOT EXISTS tasks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     parent_id INTEGER,
+                    project_id TEXT,
                     description TEXT,
                     assigned_to TEXT,
                     status TEXT,
@@ -124,9 +125,9 @@ class Memory:
     def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            # Note: We might need to add project_id column if it doesn't exist, but let's assume it's part of description for now or we can add it.
-            # To be safe and clean, let's add project_id to description in agents.
-            cursor.execute('INSERT INTO tasks (description, assigned_to, status, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-                           (description, assigned_to, 'pending', parent_id, datetime.now(), datetime.now()))
+            cursor.execute('''
+                INSERT INTO tasks (description, assigned_to, status, parent_id, project_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (description, assigned_to, 'pending', parent_id, project_id, datetime.now(), datetime.now()))
             conn.commit()
             return cursor.lastrowid
