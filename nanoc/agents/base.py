@@ -62,7 +62,7 @@ class TeamLeader(BaseAgent):
         gm = GateManager(self.memory)
         gm.create_gate(project_id, "design", "Architect", ["Architecture defined", "Peer reviewed"])
 
-        task_id = self.memory.create_task(f"Design architecture for: {project_description}", assigned_to="Architect")
+        task_id = self.memory.create_task(f"Design architecture for: {project_description}", assigned_to="Architect", project_id=project_id)
         self.memory.upsert_knowledge(f"project_{project_id}_arch", architecture)
         return project_id
 

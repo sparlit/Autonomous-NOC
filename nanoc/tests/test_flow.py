@@ -22,14 +22,16 @@ async def test_agent_delegation_flow(memory):
     mock_llm = MockLLM()
     leader = TeamLeader("Leader", "Team Leader", memory, provider=mock_llm)
 
-    task_id = await leader.delegate_tasks("Test Project")
-    assert task_id is not None
+    project_id = await leader.delegate_tasks("Test Project")
+    assert project_id is not None
 
     # Check if task was created in DB
     import sqlite3
     with sqlite3.connect(memory.db_path) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        # Find the task created for this project
+        cursor.execute("SELECT * FROM tasks WHERE project_id = ?", (project_id,))
         task = cursor.fetchone()
+        assert task is not None
         assert task['assigned_to'] == "Architect"
