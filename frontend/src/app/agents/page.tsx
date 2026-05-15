@@ -16,6 +16,13 @@ interface AgentEvent {
   _timestamp: string;
 }
 
+/**
+ * Agent Operations page component that displays agents and two live agent event streams.
+ *
+ * Fetches agent metadata from the configured API URL and subscribes to a backend WebSocket to receive agent-related events. Maintains an in-memory list of the most recent 100 agent events and renders a grid of agent cards, a "Live Thinking Stream" for thought events, and an "Action Logs" view for log events.
+ *
+ * @returns A React element rendering the Agent Operations UI
+ */
 export default function AgentOperations() {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [agents, setAgents] = useState<any[]>([]);

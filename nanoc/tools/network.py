@@ -27,25 +27,62 @@ class NetworkScanner:
     @staticmethod
     def scan_local_network(range: str):
         # Using nmap (FOSS) if available on the Windows path
+        """
+        Scan a local IP range to discover which hosts are reachable.
+        
+        Parameters:
+            range (str): The target IP range to scan (e.g., "192.168.1.0/24" or "192.168.1.0-254").
+        
+        Returns:
+            dict: Scan result containing command output and status. Expected keys:
+                - `stdout` (str): Standard output from the scan.
+                - `stderr` (str): Standard error from the scan.
+                - `returncode` (int): Process exit code.
+                - `error` (str): Error message if the command execution failed.
+        """
         return PowerShellTool.run_command(f"nmap -sn {range}")
 
 class DiagnosticTools:
     @staticmethod
     def ping(target: str, count: int = 4):
-        """Pings a target and returns the average latency."""
+        """
+        Execute a Windows ping to a target host.
+        
+        Parameters:
+            target (str): Hostname or IP address to ping.
+            count (int): Number of echo requests to send.
+        
+        Returns:
+            dict: Command execution result containing `stdout`, `stderr`, and `returncode`, or `{'error': <message>}` if execution failed.
+        """
         cmd = f"ping -n {count} {target}"
         return PowerShellTool.run_command(cmd)
 
     @staticmethod
     def traceroute(target: str):
-        """Traces the route to a target."""
+        """
+        Trace the network route (hops) to the specified host or IP using the system traceroute command.
+        
+        Parameters:
+            target (str): Hostname or IP address to trace.
+        
+        Returns:
+            dict: Result from PowerShellTool.run_command containing `stdout`, `stderr`, and `returncode`, or an `error` key if execution failed.
+        """
         cmd = f"tracert {target}"
         return PowerShellTool.run_command(cmd)
 
 class DiscoveryTool:
     @staticmethod
     def discover_topology():
-        """Simulates topology discovery for the map."""
+        """
+        Simulate network topology discovery and provide a predefined topology map.
+        
+        Returns:
+            topology (dict): A dictionary with two keys:
+                - "nodes": list of node objects, each with `id`, `label`, `type`, and `status`.
+                - "edges": list of connection objects, each with `from`, `to`, and `label` describing the link.
+        """
         # In a real scenario, this would use LLDP/CDP or SNMP neighbors
         topology = {
             "nodes": [

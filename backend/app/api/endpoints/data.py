@@ -9,8 +9,21 @@ memory = Memory(nanoc_settings.DB_PATH)
 @router.get("/topology")
 async def get_topology():
     """
-    Returns the network topology for the live map.
-    Integrates with knowledge base for agent-discovered data.
+    Provide the network topology used by the live map, preferring stored knowledge and falling back to a default graph.
+    
+    If a stored topology named "network_topology" exists in memory it is returned; otherwise a default topology is returned.
+    
+    Returns:
+        dict: A mapping with two keys:
+            - "nodes": list of node dictionaries each containing:
+                - "id": node identifier string
+                - "label": human-readable label
+                - "type": device type (e.g., "router", "switch")
+                - "status": operational status (e.g., "online", "warning")
+            - "edges": list of edge dictionaries each containing:
+                - "from": source node id string
+                - "to": destination node id string
+                - "label": link descriptor (e.g., bandwidth)
     """
     topology = memory.get_knowledge("network_topology")
     if topology:
@@ -32,6 +45,12 @@ async def get_topology():
 
 @router.get("/agents")
 async def get_agents_status():
+    """
+    Retrieve all agent records from the configured SQLite database.
+    
+    Returns:
+        agents (list[dict]): A list of agent rows where each item is a dict mapping column names to their values.
+    """
     with sqlite3.connect(nanoc_settings.DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
@@ -40,6 +59,15 @@ async def get_agents_status():
 
 @router.get("/tasks")
 async def get_tasks(project_id: str = None):
+    """
+    Retrieve recent task records, optionally filtered by project.
+    
+    Parameters:
+        project_id (str, optional): If provided, returns tasks for this project ordered by `created_at` descending. If omitted, returns the 50 most recent tasks ordered by `created_at` descending.
+    
+    Returns:
+        list[dict]: A list of task rows converted to dictionaries, each representing a task record.
+    """
     with sqlite3.connect(nanoc_settings.DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()

@@ -75,6 +75,19 @@ class Memory:
             conn.commit()
 
     def publish_event(self, topic: str, payload: Dict[str, Any], schema_version: str = "1.0"):
+        """
+        Publish an immutable event record to the events table.
+        
+        The provided payload is serialized to JSON and stored together with the topic, schema version, and the current timestamp.
+        
+        Parameters:
+            topic (str): Topic name categorizing the event.
+            payload (Dict[str, Any]): JSON-serializable event payload to store.
+            schema_version (str): Version identifier for the payload schema (defaults to "1.0").
+        
+        Returns:
+            int: The newly inserted event row ID.
+        """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('INSERT INTO events (topic, payload, schema_version, timestamp) VALUES (?, ?, ?, ?)',
@@ -83,6 +96,16 @@ class Memory:
             return cursor.lastrowid
 
     def get_metrics(self, name: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Retrieve recent metric records from the metrics table, optionally filtered by metric name.
+        
+        Parameters:
+        	name (Optional[str]): If provided, only metrics with this metric_name are returned.
+        	limit (int): Maximum number of rows to return, ordered by timestamp descending. Defaults to 100.
+        
+        Returns:
+        	List[Dict[str, Any]]: A list of dictionaries representing metric rows; each dictionary contains the columns from the metrics table (for example: id, metric_name, value, unit, tags, timestamp).
+        """
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -93,6 +116,16 @@ class Memory:
             return [dict(row) for row in cursor.fetchall()]
 
     def get_events(self, topic: Optional[str] = None, since_id: int = 0) -> List[Dict[str, Any]]:
+        """
+        Retrieve events published after a given event ID, optionally filtered by topic.
+        
+        Parameters:
+        	topic (Optional[str]): If provided, only events with this topic are returned.
+        	since_id (int): Only events with an `id` greater than this value are returned.
+        
+        Returns:
+        	events (List[Dict[str, Any]]): List of event records as dictionaries, ordered by `id` ascending.
+        """
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()

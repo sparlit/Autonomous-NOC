@@ -3,6 +3,15 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import TopologyMap from "@/components/charts/TopologyMap";
 
+/**
+ * Render the Network Topology page layout.
+ *
+ * Displays a header titled "Network Topology", a primary card showing the
+ * physical and logical infrastructure with an embedded TopologyMap, and a
+ * responsive grid containing a Device Health card with online/warning/offline counts.
+ *
+ * @returns A React element representing the Network Topology page UI.
+ */
 export default function TopologyPage() {
   return (
     <div className="space-y-6">

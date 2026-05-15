@@ -12,6 +12,13 @@ const fetchTopology = async () => {
   return res.json();
 };
 
+/**
+ * Renders a live, force-directed network topology chart using ECharts and keeps it updated.
+ *
+ * Polls the topology API every 10 seconds, displays a centered "Initializing Topology..." placeholder while loading, maps nodes and edges into the graph series (node color reflects status and symbol reflects type), and attaches a window resize listener; the chart is disposed on unmount.
+ *
+ * @returns The React element containing the topology chart or the loading placeholder
+ */
 export default function TopologyMap() {
   const chartRef = useRef<HTMLDivElement>(null);
   const { data: topology, isLoading } = useQuery({
