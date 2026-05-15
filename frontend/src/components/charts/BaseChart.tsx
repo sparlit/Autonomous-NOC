@@ -2,7 +2,6 @@
 
 import React from 'react';
 import ReactECharts from 'echarts-for-react';
-import { useTheme } from 'next-themes';
 import { EChartsOption } from 'echarts';
 
 interface BaseChartProps {
@@ -13,8 +12,6 @@ interface BaseChartProps {
 }
 
 const BaseChart: React.FC<BaseChartProps> = ({ option, style, className, onEvents }) => {
-  const { theme } = useTheme();
-
   const defaultStyle = {
     height: '300px',
     width: '100%',
@@ -26,7 +23,7 @@ const BaseChart: React.FC<BaseChartProps> = ({ option, style, className, onEvent
       option={option}
       style={defaultStyle}
       className={className}
-      theme={theme === 'dark' ? 'dark' : undefined}
+      theme="dark"
       onEvents={onEvents}
       notMerge={true}
       lazyUpdate={true}
