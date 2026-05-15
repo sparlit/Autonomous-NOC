@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from typing import List
 from nanoc.agents.base import BaseAgent
+from nanoc.memory.memory import Memory
 
 class Debater:
     def __init__(self, agents: List[BaseAgent]):
@@ -42,6 +43,7 @@ class Orchestrator:
         async def handle_gate_result(payload):
             # payload: { "type": "...", "status": "pass/fail", "gate_id": "..." }
             project_id = payload.get("project_id")
+            print(f"[Orchestrator] Handling gate result: {payload.get('status')} for project {project_id}")
             if payload.get("status") == "fail":
                 await analyst.analyze_failure(payload)
             else:
@@ -52,17 +54,18 @@ class Orchestrator:
         async def handle_gate_resolved(payload):
             project_id = payload.get("project_id")
             gate_type = payload.get("type")
+            print(f"[Orchestrator] Gate {gate_type} resolved for project {project_id}")
 
             from nanoc.agents.documentation import DocumentationAgent
-            doc_agent = DocumentationAgent("SystemDoc", self.memory)
+            doc_agent = DocumentationAgent("SystemDoc", "Documentation", self.memory)
             await doc_agent.update_docs(project_id, f"Gate {gate_type} resolved at {datetime.now()}")
 
             if gate_type == "design":
                 # Create planning task
                 arch = self.memory.get_knowledge(f"project_{project_id}_arch")
                 self.memory.create_task(f"{project_id}: Create task list for design: {arch[:50]}", assigned_to="Planner")
-
-            # Additional flow logic here...
+            elif gate_type == "code":
+                await analyst.log(f"Project {project_id} completed successfully.")
 
         bus.subscribe("gate/result-added", handle_gate_result)
         bus.subscribe("gate/resolved", handle_gate_resolved)
@@ -71,8 +74,7 @@ class Orchestrator:
         while True:
             # Check for pending tasks in memory
             import sqlite3
-            from nanoc.core.config import settings
-            with sqlite3.connect(settings.DB_PATH) as conn:
+            with sqlite3.connect(self.memory.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 cursor.execute("SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1")
@@ -86,20 +88,33 @@ class Orchestrator:
 
                     # Call specific methods based on role
                     if role == "Architect":
-                        result = await agent.design_solution(task['description'])
+                        # Ensure project_id is passed if available
+                        desc = task['description']
+                        if task['project_id'] and task['project_id'] not in desc:
+                            desc = f"{task['project_id']}: {desc}"
+                        result = await agent.design_solution(desc)
                     elif role == "Planner":
-                        result = await agent.create_todo_list(task['description'])
+                        desc = task['description']
+                        if task['project_id'] and task['project_id'] not in desc:
+                            desc = f"{task['project_id']}: {desc}"
+                        result = await agent.create_todo_list(desc)
                     elif role == "Coder":
-                        result = await agent.write_code(task['description'])
+                        desc = task['description']
+                        if task['project_id'] and task['project_id'] not in desc:
+                            desc = f"{task['project_id']}: {desc}"
+                        result = await agent.write_code(desc)
                     elif role == "Reviewer":
-                        result = await agent.review_work(task['description'])
+                        desc = task['description']
+                        if task['project_id'] and task['project_id'] not in desc:
+                            desc = f"{task['project_id']}: {desc}"
+                        result = await agent.review_work(desc)
                         if "APPROVED" not in result:
                             # Re-assign back to Coder
                             self.memory.create_task(f"Fix flaws in previous work based on review: {result}\nOriginal Task: {task['description']}", assigned_to="Coder")
                     else:
                         result = await agent.think(f"Execute this task: {task['description']}")
 
-                    with sqlite3.connect(settings.DB_PATH) as conn:
+                    with sqlite3.connect(self.memory.db_path) as conn:
                         cursor = conn.cursor()
                         cursor.execute("UPDATE tasks SET status = 'completed', result = ?, updated_at = ? WHERE id = ?",
                                        (result, datetime.now(), task['id']))
