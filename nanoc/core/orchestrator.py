@@ -30,6 +30,44 @@ class Orchestrator:
         self.agents[agent.role] = agent
 
     async def run_loop(self):
+        # Start event bus listener
+        from nanoc.core.event_bus import EventBus
+        from nanoc.core.gate_manager import GateManager
+        from nanoc.agents.analyst import Analyst
+
+        bus = EventBus(self.memory)
+        gm = GateManager(self.memory)
+        analyst = Analyst("SystemAnalyst", self.memory)
+
+        async def handle_gate_result(payload):
+            # payload: { "type": "...", "status": "pass/fail", "gate_id": "..." }
+            project_id = payload.get("project_id")
+            if payload.get("status") == "fail":
+                await analyst.analyze_failure(payload)
+            else:
+                gate_id = payload.get("gate_id")
+                if gate_id:
+                    gm.add_result(gate_id, payload)
+
+        async def handle_gate_resolved(payload):
+            project_id = payload.get("project_id")
+            gate_type = payload.get("type")
+
+            from nanoc.agents.documentation import DocumentationAgent
+            doc_agent = DocumentationAgent("SystemDoc", self.memory)
+            await doc_agent.update_docs(project_id, f"Gate {gate_type} resolved at {datetime.now()}")
+
+            if gate_type == "design":
+                # Create planning task
+                arch = self.memory.get_knowledge(f"project_{project_id}_arch")
+                self.memory.create_task(f"{project_id}: Create task list for design: {arch[:50]}", assigned_to="Planner")
+
+            # Additional flow logic here...
+
+        bus.subscribe("gate/result-added", handle_gate_result)
+        bus.subscribe("gate/resolved", handle_gate_resolved)
+        asyncio.create_task(bus.start_polling())
+
         while True:
             # Check for pending tasks in memory
             import sqlite3

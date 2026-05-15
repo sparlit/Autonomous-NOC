@@ -61,6 +61,17 @@ async def startup_event():
     # Background threads
     threading.Thread(target=inbox_watcher, daemon=True).start()
 
+    from nanoc.agents.governor import Governor
+    governor = Governor("SystemGovernor", memory, {})
+
+    def run_governor():
+        import asyncio
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(governor.run_governance_cycle())
+
+    threading.Thread(target=run_governor, daemon=True).start()
+
     def run_orchestrator():
         import asyncio
         loop = asyncio.new_event_loop()

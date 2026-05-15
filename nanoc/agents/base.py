@@ -1,4 +1,6 @@
 import asyncio
+import json
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from nanoc.core.llm import LLMProvider
 from nanoc.memory.memory import Memory
@@ -44,51 +46,120 @@ class BaseAgent:
 
 class TeamLeader(BaseAgent):
     async def delegate_tasks(self, project_description: str):
-        await self.log(f"Starting project: {project_description}")
+        project_id = f"proj_{int(datetime.now().timestamp())}"
+        await self.log(f"Starting project {project_id}: {project_description}")
+
+        self.memory.publish_event("project/incoming-job", {
+            "project_id": project_id,
+            "description": project_description
+        })
+
         prompt = f"Break down this project into high-level architectural requirements:\n{project_description}"
         architecture = await self.think(prompt)
+
+        # Create initial design gate
+        from nanoc.core.gate_manager import GateManager
+        gm = GateManager(self.memory)
+        gm.create_gate(project_id, "design", "Architect", ["Architecture defined", "Peer reviewed"])
+
         task_id = self.memory.create_task(f"Design architecture for: {project_description}", assigned_to="Architect")
-        self.memory.upsert_knowledge(f"project_{task_id}_arch", architecture)
-        return task_id
+        self.memory.upsert_knowledge(f"project_{project_id}_arch", architecture)
+        return project_id
 
 class Architect(BaseAgent):
     async def design_solution(self, requirements: str):
         await self.log("Designing system architecture with internal debate...")
-        prompt = f"Design a technical architecture based on these requirements:\n{requirements}\nProvide a high-level design."
 
-        # Internal debate logic
-        from nanoc.core.orchestrator import Debater
-        debater = Debater([self]) # Simplification for demo: debater with itself/different prompts
-        design = await debater.debate(prompt)
+        # Extract project_id from requirements or context (simplified here)
+        project_id = requirements.split(":")[0] if ":" in requirements else "unknown"
+        from nanoc.core.gate_manager import GateManager
+        gm = GateManager(self.memory)
+        gate_id = gm.get_active_gate(project_id)
 
-        task_id = self.memory.create_task(f"Create task list for design: {design[:50]}...", assigned_to="Planner")
+        # In a real system, we'd spawn multiple agents for debate
+        pro_prompt = f"Design a technical architecture (PRO view) for: {requirements}"
+        pro_view = await self.think(pro_prompt)
+
+        con_prompt = f"Critique this architecture and suggest alternatives (CON view): {pro_view}"
+        con_view = await self.think(con_prompt)
+
+        final_prompt = f"Synthesize a final architecture design considering these views:\nPRO: {pro_view}\nCON: {con_view}"
+        design = await self.think(final_prompt)
+
+        self.memory.publish_event("gate/result-added", {
+            "gate_id": gate_id,
+            "project_id": project_id,
+            "type": "design_review",
+            "status": "pass",
+            "content": design
+        })
+
+        # Wait for gate resolution before creating next task is handled by orchestrator/event bus now
         return design
 
 class Planner(BaseAgent):
     async def create_todo_list(self, architecture: str):
         await self.log("Generating granular task list...")
+        project_id = architecture.split(":")[0] if ":" in architecture else "unknown"
+
         prompt = f"Create a granular TODO list for this architecture:\n{architecture}\nList specific coding tasks, one per line starting with 'TASK:'."
         todo_list = await self.think(prompt)
+
+        # Create code gate
+        from nanoc.core.gate_manager import GateManager
+        gm = GateManager(self.memory)
+        gm.create_gate(project_id, "code", "Coder", ["Code written", "Tests passed"])
+
         for line in todo_list.split("\n"):
             if line.startswith("TASK:"):
                 task_desc = line.replace("TASK:", "").strip()
-                self.memory.create_task(task_desc, assigned_to="Coder")
+                self.memory.create_task(f"{project_id}: {task_desc}", assigned_to="Coder")
         return todo_list
 
 class Coder(BaseAgent):
     async def write_code(self, task: str):
         await self.log(f"Coding task: {task}")
+        project_id = task.split(":")[0] if ":" in task else "unknown"
+
         prompt = f"Write the Python code to solve this task:\n{task}\nProvide ONLY the code."
         code = await self.think(prompt)
+
+        # Publish result to the event bus
+        self.memory.publish_event("worker/response", {
+            "project_id": project_id,
+            "role": "Coder",
+            "task": task,
+            "result": code,
+            "status": "pending_review"
+        })
+
         # Verify and review before committing
-        self.memory.create_task(f"Review this code for flaws:\n{code}", assigned_to="Reviewer")
+        self.memory.create_task(f"{project_id}: Review this code for flaws:\n{code}", assigned_to="Reviewer")
         return code
 
 class Reviewer(BaseAgent):
     async def review_work(self, work: str):
         await self.log("Reviewing work for flaws...")
+        project_id = work.split(":")[0] if ":" in work else "unknown"
+
+        from nanoc.core.gate_manager import GateManager
+        gm = GateManager(self.memory)
+        gate_id = gm.get_active_gate(project_id)
+
         prompt = f"Review this code/work and identify flaws:\n{work}\nIf it is perfect, say 'APPROVED'. Otherwise list improvements."
         review = await self.think(prompt)
-        if "APPROVED" in review:
+
+        status = "pass" if "APPROVED" in review else "fail"
+
+        self.memory.publish_event("gate/result-added", {
+            "gate_id": gate_id,
+            "project_id": project_id,
+            "type": "code_review",
+            "status": status,
+            "content": review,
+            "error": review if status == "fail" else None
+        })
+
+        if status == "pass":
             await self.log("Work approved.")
         return review
