@@ -502,23 +502,30 @@ function SidebarMenuButton({
   variant = "default",
   size = "default",
   tooltip,
+  asChild = false,
   className,
   ...props
 }: useRender.ComponentProps<"button"> &
   React.ComponentProps<"button"> & {
     isActive?: boolean
     tooltip?: string | React.ComponentProps<typeof TooltipContent>
+    asChild?: boolean
   } & VariantProps<typeof sidebarMenuButtonVariants>) {
   const { isMobile, state } = useSidebar()
+
+  const renderProp = asChild && React.isValidElement(props.children)
+    ? props.children
+    : render
+
   const comp = useRender({
     defaultTagName: "button",
     props: mergeProps<"button">(
       {
         className: cn(sidebarMenuButtonVariants({ variant, size }), className),
       },
-      props
+      asChild ? { ...props, children: undefined } : props
     ),
-    render: !tooltip ? render : <TooltipTrigger render={render} />,
+    render: !tooltip ? renderProp : <TooltipTrigger render={renderProp} />,
     state: {
       slot: "sidebar-menu-button",
       sidebar: "menu-button",
@@ -667,13 +674,19 @@ function SidebarMenuSubButton({
   render,
   size = "md",
   isActive = false,
+  asChild = false,
   className,
   ...props
 }: useRender.ComponentProps<"a"> &
   React.ComponentProps<"a"> & {
     size?: "sm" | "md"
     isActive?: boolean
+    asChild?: boolean
   }) {
+  const renderProp = asChild && React.isValidElement(props.children)
+    ? props.children
+    : render
+
   return useRender({
     defaultTagName: "a",
     props: mergeProps<"a">(
@@ -683,9 +696,9 @@ function SidebarMenuSubButton({
           className
         ),
       },
-      props
+      asChild ? { ...props, children: undefined } : props
     ),
-    render,
+    render: renderProp,
     state: {
       slot: "sidebar-menu-sub-button",
       sidebar: "menu-sub-button",

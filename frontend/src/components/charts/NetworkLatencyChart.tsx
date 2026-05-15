@@ -2,6 +2,7 @@
 
 import React from 'react';
 import BaseChart from './BaseChart';
+import { EChartsOption } from 'echarts';
 
 interface NetworkLatencyChartProps {
   data?: { time: string; value: number }[];
@@ -19,10 +20,10 @@ const NetworkLatencyChart: React.FC<NetworkLatencyChartProps> = ({ data }) => {
     { time: '10:30', value: 16 },
   ];
 
-  const option = {
+  const option: EChartsOption = {
     backgroundColor: 'transparent',
     tooltip: {
-      trigger: 'axis',
+      trigger: 'axis' as const,
       backgroundColor: '#18181b',
       borderColor: '#27272a',
       textStyle: { color: '#f4f4f5' },
@@ -35,14 +36,14 @@ const NetworkLatencyChart: React.FC<NetworkLatencyChartProps> = ({ data }) => {
       containLabel: true,
     },
     xAxis: {
-      type: 'category',
+      type: 'category' as const,
       boundaryGap: false,
       data: chartData.map(d => d.time),
       axisLine: { lineStyle: { color: '#3f3f46' } },
       axisLabel: { color: '#a1a1aa' },
     },
     yAxis: {
-      type: 'value',
+      type: 'value' as const,
       axisLine: { show: false },
       axisLabel: { color: '#a1a1aa', formatter: '{value} ms' },
       splitLine: { lineStyle: { color: '#27272a' } },

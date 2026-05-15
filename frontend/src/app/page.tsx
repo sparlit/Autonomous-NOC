@@ -1,7 +1,7 @@
 'use client'
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, AlertCircle, Server, Globe, Clock } from "lucide-react";
+import { Activity, AlertCircle, Server, Clock } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import NetworkLatencyChart from "@/components/charts/NetworkLatencyChart";
 import ThroughputChart from "@/components/charts/ThroughputChart";

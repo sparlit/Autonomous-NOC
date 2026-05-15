@@ -13,8 +13,17 @@ import { CheckCircle2, Clock, AlertCircle } from "lucide-react";
  *
  * @returns A React element representing the task board UI.
  */
+interface Task {
+  id: string;
+  status: string;
+  project_id: string;
+  description: string;
+  assigned_to: string;
+  updated_at: string;
+}
+
 export default function TaskBoard() {
-  const [tasks, setTasks] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   useEffect(() => {
@@ -25,7 +34,7 @@ export default function TaskBoard() {
     fetchTasks();
     const interval = setInterval(fetchTasks, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [API_URL]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {

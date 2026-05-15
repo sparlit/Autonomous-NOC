@@ -1,10 +1,16 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Brain, Terminal as TerminalIcon, Cpu, Activity } from "lucide-react";
+import { Brain, Terminal as TerminalIcon, Cpu } from "lucide-react";
+
+interface Agent {
+  id: string;
+  role: string;
+  status: string;
+}
 
 interface AgentEvent {
   _topic: string;
@@ -25,8 +31,7 @@ interface AgentEvent {
  */
 export default function AgentOperations() {
   const [events, setEvents] = useState<AgentEvent[]>([]);
-  const [agents, setAgents] = useState<any[]>([]);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   useEffect(() => {
@@ -46,7 +51,7 @@ export default function AgentOperations() {
     };
 
     return () => socket.close();
-  }, []);
+  }, [API_URL]);
 
   return (
     <div className="space-y-6">
