@@ -44,6 +44,17 @@ class GateManager:
             self.evaluate_gate(gate_id)
 
     def evaluate_gate(self, gate_id: str):
+        """
+        Evaluate the gate identified by `gate_id` and update its status and events based on results.
+        
+        If the gate exists, updates persistent gate data and emits lifecycle events:
+        - If at least one result has status `"pass"`, sets the gate status to `DONE` then to `COMPLETE`, persisting after each change and emitting `gate/completed` and `gate/resolved` respectively.
+        - If no passing results are present, emits `gate/failed` with the current gate data.
+        
+        Parameters:
+            gate_id (str): Identifier of the gate to evaluate.
+        
+        """
         gate_data = self.memory.get_knowledge(f"gate:{gate_id}")
         if not gate_data:
             return

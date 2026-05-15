@@ -135,6 +135,15 @@ class TeamLeader(BaseAgent):
 
 class Architect(BaseAgent):
     async def design_solution(self, requirements: str):
+        """
+        Generate a final system architecture by running PRO/CON critique passes on the provided requirements.
+        
+        Parameters:
+            requirements (str): Project requirements text. May include a project prefix like `proj_<id>: ...`; if no prefix is present the implementation will derive `project_id` as `"unknown"`.
+        
+        Returns:
+            design (str): The synthesized architecture design produced after internal PRO/CON review.
+        """
         await self.log("Designing system architecture with internal debate...")
 
         # Extract project_id from requirements or context (simplified here)

@@ -9,6 +9,14 @@ from nanoc.tests.mocks import MockLLM
 
 @pytest.fixture
 def memory():
+    """
+    Provide a Memory instance backed by the on-disk test SQLite file.
+    
+    This fixture ensures the test database file at "nanoc/memory/test_integration.db" is removed before creating the Memory instance and removes it again after the test completes, preventing state carry-over between tests.
+    
+    Returns:
+        Memory: A Memory object backed by "nanoc/memory/test_integration.db".
+    """
     db_path = "nanoc/memory/test_integration.db"
     if os.path.exists(db_path):
         os.remove(db_path)

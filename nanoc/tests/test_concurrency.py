@@ -7,6 +7,14 @@ from nanoc.tests.mocks import MockLLM
 
 @pytest.fixture
 def memory():
+    """
+    Create and yield a fresh Memory instance backed by a temporary SQLite file for concurrency tests.
+    
+    The function ensures the database file at "nanoc/memory/test_concurrency.db" is removed before creating the Memory instance and again after the caller completes, so each test gets a clean on-disk database.
+    
+    Returns:
+        Memory: A Memory instance pointing to the temporary SQLite database at "nanoc/memory/test_concurrency.db".
+    """
     db_path = "nanoc/memory/test_concurrency.db"
     if os.path.exists(db_path):
         os.remove(db_path)
@@ -50,10 +58,22 @@ async def test_event_bus_concurrent_subscribers(memory):
     results = []
 
     async def sub1(payload):
+        """
+        Subscriber callback that waits briefly then records the payload's `data` value prefixed with "sub1".
+        
+        Parameters:
+            payload (dict): Event payload expected to contain a `'data'` key whose value will be appended to the shared `results` list as `"sub1:<data>"`.
+        """
         await asyncio.sleep(0.05)
         results.append(f"sub1:{payload['data']}")
 
     async def sub2(payload):
+        """
+        Waits briefly, then appends "sub2:<data>" to the shared results list.
+        
+        Parameters:
+            payload (dict): Message payload containing a 'data' key whose value is inserted into the appended string.
+        """
         await asyncio.sleep(0.02)
         results.append(f"sub2:{payload['data']}")
 

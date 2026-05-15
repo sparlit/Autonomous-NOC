@@ -20,9 +20,9 @@ class EventBus:
 
     async def start_polling(self, interval: float = 1.0):
         """
-        Start the event polling loop and dispatch incoming events to registered subscribers.
+        Run the polling loop that retrieves new events from the Memory backend and dispatches them to registered subscribers.
         
-        Continuously polls the configured memory backend for new events (starting from the last seen event id), updates internal last_seen_id for each processed event, and delivers event payloads to matching subscribers. Subscribers registered under an exact topic receive the parsed payload as-is. Subscribers registered with a prefix wildcard (e.g., "project/*") or the global "*" receive a copy of the payload augmented with `_topic` (the event's topic), `_event_id` (the event's id), and `_timestamp` (the event's timestamp). Coroutine callbacks are awaited; synchronous callbacks are invoked directly. The loop sleeps for `interval` seconds between polls and runs until `stop_polling` sets the running flag to False.
+        Polls for events starting from the last seen event id, updates self.last_seen_id for each processed event, and delivers event payloads to matching subscribers. Subscribers registered under an exact topic receive the parsed payload as-is. Subscribers registered with a prefix wildcard (e.g., "project/*") or the global "*" receive a copy of the payload augmented with `_topic` (event topic), `_event_id` (event id), and `_timestamp` (event timestamp). Coroutine callbacks are awaited and synchronous callbacks are invoked directly. Events with payloads that cannot be decoded as JSON are skipped; exceptions raised by individual callbacks are caught and logged. The loop sleeps for `interval` seconds between iterations and stops when `stop_polling` clears the running flag.
         
         Parameters:
             interval (float): Seconds to wait between polling iterations (default 1.0).

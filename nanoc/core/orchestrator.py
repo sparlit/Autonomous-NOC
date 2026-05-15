@@ -7,6 +7,12 @@ from nanoc.memory.memory import Memory
 
 class Debater:
     def __init__(self, agents: List[BaseAgent]):
+        """
+        Store the provided list of agents on the instance.
+        
+        Parameters:
+            agents (List[BaseAgent]): Agent instances to be managed by this Debater/Orchestrator.
+        """
         self.agents = agents
 
     async def debate(self, topic: str) -> str:
@@ -32,6 +38,11 @@ class Orchestrator:
 
     async def run_loop(self):
         # Start event bus listener
+        """
+        Continuously process external gate events and pending tasks, dispatching work to registered agents and updating memory.
+        
+        Subscribes to the event bus to handle gate results and gate resolutions (analyzing failures, forwarding results to the GateManager, updating project documentation, creating a planning task for design gates, and logging code gate completions). Starts the event bus polling in the background, then enters a persistent loop that queries the oldest pending task from the memory-backed SQLite database (self.memory.db_path). When a pending task is found and a corresponding agent is registered, dispatches the task to role-specific agent methods (Architect → design_solution, Planner → create_todo_list, Coder → write_code, Reviewer → review_work, otherwise think), ensuring the project_id is prefixed into the task description when available. If a review is not approved, creates a follow-up task assigned to the Coder. Upon task completion, writes the result and completion timestamp back to the tasks table and continues polling at regular intervals.
+        """
         from nanoc.core.event_bus import EventBus
         from nanoc.core.gate_manager import GateManager
         from nanoc.agents.analyst import Analyst
@@ -42,6 +53,18 @@ class Orchestrator:
 
         async def handle_gate_result(payload):
             # payload: { "type": "...", "status": "pass/fail", "gate_id": "..." }
+            """
+            Handle a gate result payload by triggering failure analysis or recording the result with the gate manager.
+            
+            If the payload's "status" equals "fail", triggers failure analysis using the provided payload. Otherwise, if the payload contains a "gate_id", records the result with the gate manager.
+            
+            Parameters:
+                payload (dict): Event payload containing at least:
+                    - "type" (str, optional): The gate type.
+                    - "status" (str): Result status, expected "pass" or "fail".
+                    - "gate_id" (str, optional): Identifier of the gate.
+                    - "project_id" (str, optional): Identifier of the project.
+            """
             project_id = payload.get("project_id")
             print(f"[Orchestrator] Handling gate result: {payload.get('status')} for project {project_id}")
             if payload.get("status") == "fail":
@@ -52,6 +75,17 @@ class Orchestrator:
                     gm.add_result(gate_id, payload)
 
         async def handle_gate_resolved(payload):
+            """
+            Handle a resolved gate event by updating project documentation and creating any follow-up tasks or logs.
+            
+            Parameters:
+                payload (dict): Event payload expected to contain "project_id" (identifier of the project) and "type" (gate type, e.g., "design" or "code"). 
+            
+            Description:
+                - Always updates the project's documentation to record the gate resolution with a timestamp.
+                - If `type` is "design", creates a planning task assigned to the Planner that includes a short slice of the project's architecture.
+                - If `type` is "code", records a successful completion message via the analyst.
+            """
             project_id = payload.get("project_id")
             gate_type = payload.get("type")
             print(f"[Orchestrator] Gate {gate_type} resolved for project {project_id}")
