@@ -11,7 +11,18 @@ memory = Memory(nanoc_settings.DB_PATH)
 @router.get("/status")
 async def get_system_status():
     """
-    Returns high-level system status by querying Prometheus and local metrics.
+    Provide high-level system status including observed latency and task backlog.
+    
+    Latency is obtained from Prometheus with a fallback of "12ms" if Prometheus is unavailable or returns no data.
+    Backlog is the count of tasks with status 'pending' from the local SQLite database.
+    
+    Returns:
+        dict: Mapping with keys:
+            "latency" (str): latency value with "ms" suffix,
+            "uptime" (str): service uptime percentage,
+            "traffic" (str): current traffic estimate,
+            "status" (str): overall status,
+            "backlog" (int): number of pending tasks
     """
     try:
         # Try to get real latency from Prometheus if available
@@ -42,10 +53,32 @@ async def get_system_status():
 
 @router.get("/history")
 async def get_metric_history(name: str, limit: int = 50):
+    """
+    Retrieve historical metric data for the specified metric name.
+    
+    Parameters:
+    	name (str): Metric identifier to fetch history for.
+    	limit (int): Maximum number of metric entries to return (default 50).
+    
+    Returns:
+    	Metric history for the given metric name, limited to `limit` entries.
+    """
     return memory.get_metrics(name, limit)
 
 @router.get("/metrics")
 async def get_metrics(query: str):
+    """
+    Execute a Prometheus instant query and return the raw JSON result.
+    
+    Parameters:
+        query (str): Prometheus instant query string to execute.
+    
+    Returns:
+        dict: Parsed JSON response returned by the Prometheus HTTP API.
+    
+    Raises:
+        HTTPException: Raised with status_code=500 and detail set to the underlying exception message if the HTTP request fails or returns a non-2xx status.
+    """
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(f"{settings.PROMETHEUS_URL}/api/v1/query", params={"query": query})

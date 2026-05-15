@@ -27,6 +27,13 @@ interface Event {
   status: string;
 }
 
+/**
+ * Renders the monitoring dashboard for the Home page.
+ *
+ * Subscribes to system `status` and `alerts` data (refetching every 5000ms) and displays the executive overview, charts, and recent events.
+ *
+ * @returns The Home page React element representing the monitoring dashboard
+ */
 export default function Home() {
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ["status"],

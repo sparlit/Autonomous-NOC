@@ -1,4 +1,3 @@
-
 import * as React from "react"
 import {
   LayoutDashboard,
@@ -114,6 +113,14 @@ const data = {
   ],
 }
 
+/**
+ * Renders the application's sidebar navigation, including header, primary navigation with optional submenus, and footer links.
+ *
+ * Forwards all received props to the underlying `Sidebar` component.
+ *
+ * @param props - Props passed through to the `Sidebar` component (e.g., className, style, event handlers).
+ * @returns The rendered sidebar React element.
+ */
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
     <Sidebar variant="inset" {...props}>

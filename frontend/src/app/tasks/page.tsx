@@ -6,6 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CheckCircle2, Clock, AlertCircle } from "lucide-react";
 
+/**
+ * Renders a task board that polls the tasks API every 5 seconds and displays current tasks with status, project, description, assignee, and last-updated time.
+ *
+ * The component reads the API base from `NEXT_PUBLIC_API_URL` (falls back to `http://localhost:8000`), fetches `/api/data/tasks` on mount and updates state only for successful HTTP responses. The polling interval is cleared on unmount.
+ *
+ * @returns A React element representing the task board UI.
+ */
 export default function TaskBoard() {
   const [tasks, setTasks] = useState<any[]>([]);
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
