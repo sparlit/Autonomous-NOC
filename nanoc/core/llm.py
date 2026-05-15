@@ -1,5 +1,6 @@
 import httpx
 import json
+import asyncio
 from nanoc.core.config import settings
 
 class LLMProvider:
