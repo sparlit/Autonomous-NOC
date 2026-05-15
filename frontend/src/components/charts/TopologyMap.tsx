@@ -6,6 +6,19 @@ import { useQuery } from '@tanstack/react-query';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+interface TopologyNode {
+  id: string;
+  label: string;
+  type: string;
+  status: string;
+}
+
+interface TopologyEdge {
+  from: string;
+  to: string;
+  label: string;
+}
+
 const fetchTopology = async () => {
   const res = await fetch(`${API_URL}/api/data/topology`);
   if (!res.ok) throw new Error('Failed to fetch topology');
@@ -32,7 +45,7 @@ export default function TopologyMap() {
 
     const chart = echarts.init(chartRef.current, 'dark');
 
-    const option = {
+    const option: echarts.EChartsOption = {
       title: {
         text: 'Live Network Topology',
         left: 'center',
@@ -40,11 +53,11 @@ export default function TopologyMap() {
       },
       tooltip: {},
       animationDurationUpdate: 1500,
-      animationEasingUpdate: 'quinticInOut',
+      animationEasingUpdate: 'quinticInOut' as const,
       series: [
         {
-          type: 'graph',
-          layout: 'force',
+          type: 'graph' as const,
+          layout: 'force' as const,
           symbolSize: 50,
           roam: true,
           label: {
@@ -57,7 +70,7 @@ export default function TopologyMap() {
             edgeLength: 200
           },
           draggable: true,
-          data: topology.nodes.map((node: any) => ({
+          data: topology.nodes.map((node: TopologyNode) => ({
             name: node.id,
             value: node.label,
             category: node.type,
@@ -66,7 +79,7 @@ export default function TopologyMap() {
             },
             symbol: node.type === 'router' ? 'diamond' : 'circle'
           })),
-          links: topology.edges.map((edge: any) => ({
+          links: topology.edges.map((edge: TopologyEdge) => ({
             source: edge.from,
             target: edge.to,
             label: {

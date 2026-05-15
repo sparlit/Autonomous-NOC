@@ -2,6 +2,7 @@
 
 import React from 'react';
 import BaseChart from './BaseChart';
+import { EChartsOption } from 'echarts';
 
 interface ThroughputChartProps {
   data?: { time: string; inbound: number; outbound: number }[];
@@ -18,10 +19,10 @@ const ThroughputChart: React.FC<ThroughputChartProps> = ({ data }) => {
     { time: '10:30', inbound: 720, outbound: 340 },
   ];
 
-  const option = {
+  const option: EChartsOption = {
     backgroundColor: 'transparent',
     tooltip: {
-      trigger: 'axis',
+      trigger: 'axis' as const,
       backgroundColor: '#18181b',
       borderColor: '#27272a',
       textStyle: { color: '#f4f4f5' },
@@ -39,14 +40,14 @@ const ThroughputChart: React.FC<ThroughputChartProps> = ({ data }) => {
       containLabel: true,
     },
     xAxis: {
-      type: 'category',
+      type: 'category' as const,
       boundaryGap: false,
       data: chartData.map(d => d.time),
       axisLine: { lineStyle: { color: '#3f3f46' } },
       axisLabel: { color: '#a1a1aa' },
     },
     yAxis: {
-      type: 'value',
+      type: 'value' as const,
       axisLabel: { color: '#a1a1aa', formatter: '{value} Mbps' },
       splitLine: { lineStyle: { color: '#27272a' } },
     },

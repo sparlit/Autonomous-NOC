@@ -2,6 +2,7 @@
 
 import React from 'react';
 import BaseChart from './BaseChart';
+import { EChartsOption } from 'echarts';
 
 interface DeviceStatusChartProps {
   data?: { name: string; value: number }[];
@@ -15,10 +16,10 @@ const DeviceStatusChart: React.FC<DeviceStatusChartProps> = ({ data }) => {
     { name: 'Maintenance', value: 5 },
   ];
 
-  const option = {
+  const option: EChartsOption = {
     backgroundColor: 'transparent',
     tooltip: {
-      trigger: 'item',
+      trigger: 'item' as const,
       backgroundColor: '#18181b',
       borderColor: '#27272a',
       textStyle: { color: '#f4f4f5' },
