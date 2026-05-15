@@ -62,4 +62,6 @@ class GateManager:
             self.memory.upsert_knowledge(f"gate:{gate_id}", gate_data)
             self.memory.publish_event("gate/resolved", gate_data)
         else:
+            gate_data["status"] = GateStatus.DONE.value  # or introduce GateStatus.FAILED
+            self.memory.upsert_knowledge(f"gate:{gate_id}", gate_data)
             self.memory.publish_event("gate/failed", gate_data)
