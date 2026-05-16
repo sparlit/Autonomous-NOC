@@ -14,9 +14,15 @@ def read_root():
     return {"status": "NANOC is Running", "inbox_path": os.path.abspath("nanoc/inbox")}
 
 @app.get("/logs")
-def get_logs():
+def get_logs(limit: int = 50):
     # Fetch logs from SQLite
-    return {"logs": "Agent thoughts will appear here"}
+    import sqlite3
+    with sqlite3.connect(settings.DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM logs ORDER BY timestamp DESC LIMIT ?", (limit,))
+        rows = cursor.fetchall()
+        return {"logs": [dict(row) for row in rows]}
 
 def inbox_watcher():
     leader = TeamLeader("Leader", "Team Leader", memory)

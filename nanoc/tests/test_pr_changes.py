@@ -558,24 +558,24 @@ class TestGateManagerFailedBranch:
         payload = json.loads(events[-1]["payload"])
         assert payload["id"] == gate_id
 
-    def test_evaluate_gate_with_no_passes_sets_done_status(self, memory):
+    def test_evaluate_gate_with_no_passes_sets_failed_status(self, memory):
         from nanoc.core.gate_manager import GateManager
         from nanoc.core.gate_manager import GateStatus
         gm = GateManager(memory)
         gate_id = gm.create_gate("proj_fail2", "code", "Coder", ["pass req"])
         gm.add_result(gate_id, {"status": "fail"})
         gate_data = memory.get_knowledge(f"gate:{gate_id}")
-        assert gate_data["status"] == GateStatus.DONE.value
+        assert gate_data["status"] == GateStatus.FAILED.value
 
-    def test_evaluate_gate_with_no_results_publishes_gate_failed(self, memory):
-        """evaluate_gate called directly with zero results -> else branch."""
+    def test_evaluate_gate_with_no_results_does_nothing(self, memory):
+        """evaluate_gate called directly with zero results does nothing."""
         from nanoc.core.gate_manager import GateManager
         gm = GateManager(memory)
         gate_id = gm.create_gate("proj_empty", "design", "Architect", ["needs pass"])
         # Call evaluate directly without adding results
         gm.evaluate_gate(gate_id)
         events = memory.get_events(topic="gate/failed")
-        assert len(events) >= 1
+        assert len(events) == 0
 
     def test_evaluate_gate_with_pass_still_resolves(self, memory):
         """Regression: passing result still publishes gate/resolved."""

@@ -34,10 +34,12 @@ class LLMProvider:
 
         hub = TelemetryHub(Memory(settings.DB_PATH))
 
-        # Mock token counting
-        prompt_tokens = len(prompt.split())
-        completion_tokens = len(response.split())
-        cost = (prompt_tokens + completion_tokens) * 0.00001 # Mock cost
+        # Improved token counting estimation (roughly 4 chars per token)
+        prompt_tokens = len(prompt) // 4
+        completion_tokens = len(response) // 4
+
+        # Estimate cost based on common model pricing ($0.01 per 1k tokens)
+        cost = ((prompt_tokens + completion_tokens) / 1000) * 0.01
 
         hub.record_token_usage(self.model, prompt_tokens, completion_tokens, cost)
         hub.record_latency("llm_complete", duration_ms)
