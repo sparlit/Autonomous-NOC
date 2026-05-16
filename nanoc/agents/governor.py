@@ -57,8 +57,9 @@ class Governor(BaseAgent):
                     "metrics": metrics
                 })
             elif action == "SCALE_UP":
-                await self.log("Simulating scaling up: adding more coder capacity.")
-                # Logic to 'hire' or start more agent containers
+                await self.log("Autonomous scaling: increasing agent capacity.")
+                # Logic to start more agent workers
+                self.memory.publish_event("system/scale-up", {"role": "Coder", "reason": "High backlog"})
             elif action == "THROTTLE_COST":
                 await self.log("Budget warning: throttling model usage.")
                 # Logic to switch to cheaper models

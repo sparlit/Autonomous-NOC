@@ -116,6 +116,11 @@ class TeamLeader(BaseAgent):
         project_id = f"proj_{int(datetime.now().timestamp())}"
         await self.log(f"Starting project {project_id}: {project_description}")
 
+        # Track active projects
+        active_projects = self.memory.get_knowledge("active_projects") or []
+        active_projects.append(project_id)
+        self.memory.upsert_knowledge("active_projects", active_projects)
+
         self.memory.publish_event("project/incoming-job", {
             "project_id": project_id,
             "description": project_description
@@ -139,10 +144,11 @@ class Architect(BaseAgent):
 
         # Extract project_id from requirements or context (simplified here)
         project_id = requirements.split(":")[0] if ":" in requirements else "unknown"
-        if project_id.startswith("proj_") == False:
-            # Fallback for tasks that might not have the prefix if not formatted correctly
-            # In a real system we would use a more robust task/project context
-            pass
+        if not project_id.startswith("proj_"):
+            # Try to find an active project in knowledge if not in requirements
+            active_projects = self.memory.get_knowledge("active_projects") or []
+            if active_projects:
+                project_id = active_projects[-1]
 
         from nanoc.core.gate_manager import GateManager
         gm = GateManager(self.memory)
@@ -218,10 +224,14 @@ class Reviewer(BaseAgent):
         gm = GateManager(self.memory)
         gate_id = gm.get_active_gate(project_id)
 
-        prompt = f"Review this code/work and identify flaws:\n{work}\nIf it is perfect, say 'APPROVED'. Otherwise list improvements."
+        prompt = (
+            f"Review this code/work and identify flaws for project {project_id}:\n{work}\n"
+            "If it meets all requirements and follows best practices, you MUST start your response with 'STATUS: APPROVED'.\n"
+            "Otherwise, start with 'STATUS: FAILED' and list specific improvements needed."
+        )
         review = await self.think(prompt)
 
-        status = "pass" if "APPROVED" in review else "fail"
+        status = "pass" if "STATUS: APPROVED" in review else "fail"
 
         self.memory.publish_event("gate/result-added", {
             "gate_id": gate_id,
@@ -233,5 +243,7 @@ class Reviewer(BaseAgent):
         })
 
         if status == "pass":
-            await self.log("Work approved.")
+            await self.log(f"Work approved for project {project_id}.")
+        else:
+            await self.log(f"Work failed review for project {project_id}.")
         return review

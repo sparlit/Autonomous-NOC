@@ -9,6 +9,7 @@ class GateStatus(Enum):
     IN_PROGRESS = "IN_PROGRESS"
     DONE = "DONE"
     COMPLETE = "COMPLETE"
+    FAILED = "FAILED"
 
 class GateManager:
     def __init__(self, memory: Memory):
@@ -48,20 +49,22 @@ class GateManager:
         if not gate_data:
             return
 
-        # Simple logic: if we have at least one result and it's a 'pass'
-        # In a real system, this would be more complex
-        passes = [r for r in gate_data["results"] if r.get("status") == "pass"]
+        results = gate_data.get("results", [])
+        if not results:
+            return
 
-        if len(passes) >= 1: # Placeholder condition
-            gate_data["status"] = GateStatus.DONE.value
-            self.memory.upsert_knowledge(f"gate:{gate_id}", gate_data)
-            self.memory.publish_event("gate/completed", gate_data)
+        # Improved logic: check for failures and ensure at least one pass
+        failures = [r for r in results if r.get("status") == "fail"]
+        passes = [r for r in results if r.get("status") == "pass"]
 
-            # If all checks pass, mark as COMPLETE
-            gate_data["status"] = GateStatus.COMPLETE.value
-            self.memory.upsert_knowledge(f"gate:{gate_id}", gate_data)
-            self.memory.publish_event("gate/resolved", gate_data)
-        else:
-            gate_data["status"] = GateStatus.DONE.value  # or introduce GateStatus.FAILED
+        if failures:
+            gate_data["status"] = GateStatus.FAILED.value
             self.memory.upsert_knowledge(f"gate:{gate_id}", gate_data)
             self.memory.publish_event("gate/failed", gate_data)
+        elif len(passes) >= 1:
+            # All checks passed so far and at least one definitive pass
+            gate_data["status"] = GateStatus.COMPLETE.value
+            self.memory.upsert_knowledge(f"gate:{gate_id}", gate_data)
+            # Maintain both for backward compatibility if needed, but resolved is primary
+            self.memory.publish_event("gate/completed", gate_data)
+            self.memory.publish_event("gate/resolved", gate_data)

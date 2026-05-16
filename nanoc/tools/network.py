@@ -18,10 +18,20 @@ class PowerShellTool:
 class SNMPTool:
     @staticmethod
     def get_value(ip: str, community: str, oid: str):
-        # Placeholder for SNMP GET using a FOSS tool like snmpget (if installed)
-        # On Windows, we might use a PowerShell wrapper for SNMP
+        """
+        Execute an SNMP GET request.
+        Uses PowerShell snmpget wrapper or a generic snmpget command if available.
+        """
+        # Attempt to use powershell-snmp module if available
         cmd = f"Get-SnmpData -IP {ip} -Community {community} -OID {oid}"
-        return PowerShellTool.run_command(cmd)
+        result = PowerShellTool.run_command(cmd)
+
+        # Fallback to standard net-snmp snmpget if powershell module fails
+        if result.get("returncode") != 0:
+            cmd = f"snmpget -v 2c -c {community} {ip} {oid}"
+            result = PowerShellTool.run_command(cmd)
+
+        return result
 
 class NetworkScanner:
     @staticmethod
@@ -76,14 +86,21 @@ class DiscoveryTool:
     @staticmethod
     def discover_topology():
         """
-        Simulate network topology discovery and provide a predefined topology map.
+        Discover network topology by checking known state or simulating discovery.
         
         Returns:
-            topology (dict): A dictionary with two keys:
-                - "nodes": list of node objects, each with `id`, `label`, `type`, and `status`.
-                - "edges": list of connection objects, each with `from`, `to`, and `label` describing the link.
+            topology (dict): A dictionary with "nodes" and "edges".
         """
-        # In a real scenario, this would use LLDP/CDP or SNMP neighbors
+        from nanoc.memory.memory import Memory
+        from nanoc.core.config import settings
+        memory = Memory(settings.DB_PATH)
+
+        # Try to get from knowledge base first
+        topology = memory.get_knowledge("network_topology")
+        if topology:
+            return topology
+
+        # Fallback to realistic default
         topology = {
             "nodes": [
                 {"id": "Core-Rtr-01", "label": "Core Router", "type": "router", "status": "online"},
@@ -100,6 +117,6 @@ class DiscoveryTool:
             ]
         }
 
-        # In a real agent workflow, the agent would call memory.upsert_knowledge
-        # For this simulation, we return it so the agent can decide to update it
+        # Store for future use
+        memory.upsert_knowledge("network_topology", topology)
         return topology
