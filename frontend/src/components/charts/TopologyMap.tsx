@@ -5,6 +5,7 @@ import * as echarts from 'echarts';
 import { useQuery } from '@tanstack/react-query';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || 'nanoc-secret-key';
 
 interface TopologyNode {
   id: string;
@@ -20,7 +21,9 @@ interface TopologyEdge {
 }
 
 const fetchTopology = async () => {
-  const res = await fetch(`${API_URL}/api/data/topology`);
+  const res = await fetch(`${API_URL}/api/data/topology`, {
+    headers: { 'X-API-Key': API_KEY }
+  });
   if (!res.ok) throw new Error('Failed to fetch topology');
   return res.json();
 };

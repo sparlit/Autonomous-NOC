@@ -43,6 +43,17 @@ async def get_topology():
     ]
     return {"nodes": nodes, "edges": edges}
 
+@router.get("/inventory")
+async def get_device_inventory():
+    """
+    Retrieve device inventory from knowledge base.
+    """
+    mem = Memory(nanoc_settings.DB_PATH)
+    topology = mem.get_knowledge("network_topology")
+    if topology:
+        return topology.get("nodes", [])
+    return []
+
 @router.get("/agents")
 async def get_agents_status():
     """

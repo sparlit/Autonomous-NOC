@@ -33,15 +33,18 @@ export default function AgentOperations() {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_KEY = process.env.NEXT_PUBLIC_API_KEY || 'nanoc-secret-key';
 
   useEffect(() => {
     const fetchAgents = async () => {
-        const res = await fetch(`${API_URL}/api/data/agents`);
+        const res = await fetch(`${API_URL}/api/data/agents`, {
+          headers: { 'X-API-Key': API_KEY }
+        });
         if (res.ok) setAgents(await res.json());
     };
     fetchAgents();
 
-    const socket = new WebSocket(`${API_URL.replace('http', 'ws')}/ws`);
+    const socket = new WebSocket(`${API_URL.replace('http', 'ws')}/ws?token=${API_KEY}`);
 
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);

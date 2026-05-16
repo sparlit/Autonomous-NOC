@@ -6,7 +6,7 @@ import os
 def start_nanoc():
     env = os.environ.copy()
     env["PYTHONPATH"] = os.getcwd()
-    return subprocess.Popen([sys.executable, "nanoc/main.py"], env=env)
+    return subprocess.Popen([sys.executable, "main.py"], env=env)
 
 def watchdog():
     print("Watchdog started...")

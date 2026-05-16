@@ -55,7 +55,7 @@ const data = {
       items: [
         {
           title: "Active Incidents",
-          url: "#",
+          url: "/alerts",
         },
         {
           title: "Alert History",
@@ -74,7 +74,7 @@ const data = {
         },
         {
           title: "Device Inventory",
-          url: "#",
+          url: "/inventory",
         },
       ],
     },
@@ -89,7 +89,7 @@ const data = {
         },
         {
           title: "Action Logs",
-          url: "#",
+          url: "/logs",
         },
       ],
     },

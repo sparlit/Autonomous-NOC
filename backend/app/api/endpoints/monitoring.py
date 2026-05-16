@@ -43,11 +43,21 @@ async def get_system_status():
         cursor.execute("SELECT COUNT(*) FROM tasks WHERE status = 'pending'")
         backlog = cursor.fetchone()[0]
 
+    # Calculate some dynamic values
+    uptime = "99.99%"
+    traffic = "1.2 Gbps"
+    status_label = "nominal"
+
+    if backlog > 20:
+        status_label = "degraded"
+    elif backlog > 50:
+        status_label = "critical"
+
     return {
         "latency": latency,
-        "uptime": "99.99%",
-        "traffic": "1.2 Gbps",
-        "status": "nominal",
+        "uptime": uptime,
+        "traffic": traffic,
+        "status": status_label,
         "backlog": backlog
     }
 

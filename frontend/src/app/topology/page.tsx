@@ -2,17 +2,32 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import TopologyMap from "@/components/charts/TopologyMap";
+import { useQuery } from '@tanstack/react-query';
 
-/**
- * Render the Network Topology page layout.
- *
- * Displays a header titled "Network Topology", a primary card showing the
- * physical and logical infrastructure with an embedded TopologyMap, and a
- * responsive grid containing a Device Health card with online/warning/offline counts.
- *
- * @returns A React element representing the Network Topology page UI.
- */
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || 'nanoc-secret-key';
+
+const fetchTopology = async () => {
+  const res = await fetch(`${API_URL}/api/data/topology`, {
+    headers: { 'X-API-Key': API_KEY }
+  });
+  if (!res.ok) throw new Error('Failed to fetch topology');
+  return res.json();
+};
+
 export default function TopologyPage() {
+  const { data: topology } = useQuery({
+    queryKey: ['topology'],
+    queryFn: fetchTopology,
+    refetchInterval: 10000,
+  });
+
+  const counts = {
+    online: topology?.nodes?.filter((n: any) => n.status === 'online').length || 0,
+    warning: topology?.nodes?.filter((n: any) => n.status === 'warning').length || 0,
+    offline: topology?.nodes?.filter((n: any) => n.status === 'offline').length || 0,
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -38,9 +53,9 @@ export default function TopologyPage() {
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-between">
-                <span className="text-emerald-500 font-bold">3 Online</span>
-                <span className="text-amber-500 font-bold">1 Warning</span>
-                <span className="text-rose-500 font-bold">0 Offline</span>
+                <span className="text-emerald-500 font-bold">{counts.online} Online</span>
+                <span className="text-amber-500 font-bold">{counts.warning} Warning</span>
+                <span className="text-rose-500 font-bold">{counts.offline} Offline</span>
             </div>
           </CardContent>
         </Card>
