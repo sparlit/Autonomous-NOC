@@ -25,10 +25,13 @@ interface Task {
 export default function TaskBoard() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_KEY = process.env.NEXT_PUBLIC_API_KEY || 'nanoc-secret-key';
 
   useEffect(() => {
     const fetchTasks = async () => {
-        const res = await fetch(`${API_URL}/api/data/tasks`);
+        const res = await fetch(`${API_URL}/api/data/tasks`, {
+          headers: { 'X-API-Key': API_KEY }
+        });
         if (res.ok) setTasks(await res.json());
     };
     fetchTasks();
@@ -40,6 +43,7 @@ export default function TaskBoard() {
     switch (status) {
         case 'completed': return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
         case 'pending': return <Clock className="h-4 w-4 text-amber-500 animate-pulse" />;
+        case 'waiting_for_human': return <AlertCircle className="h-4 w-4 text-amber-600 animate-bounce" />;
         case 'failed': return <AlertCircle className="h-4 w-4 text-rose-500" />;
         default: return <Clock className="h-4 w-4 text-zinc-500" />;
     }

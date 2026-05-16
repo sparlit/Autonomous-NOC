@@ -7,18 +7,27 @@ router = APIRouter()
 @router.get("/summary")
 async def get_alerts_summary():
     """
-    Returns a summary of active alerts from Keep.
+    Returns a summary of active alerts from Keep or local fallback.
     """
-    # Mocking for now
+    all_alerts = await get_all_alerts()
+    alerts_list = all_alerts.get("alerts", [])
+
+    urgent = len([a for a in alerts_list if a.get("severity") == "critical"])
+    warning = len([a for a in alerts_list if a.get("severity") == "warning"])
+
+    recent = []
+    for a in alerts_list[:5]:
+        recent.append({
+            "time": a.get("timestamp", ""),
+            "event": a.get("title", ""),
+            "status": a.get("status", "Active")
+        })
+
     return {
-        "active_alerts": 3,
-        "urgent": 2,
-        "warning": 1,
-        "recent_events": [
-            {"time": "14:23:01", "event": "Switch-04 port Gi0/1 bounce", "status": "Resolved"},
-            {"time": "14:20:15", "event": "High latency detected in US-EAST", "status": "Investigating"},
-            {"time": "14:15:30", "event": "Backup job completed", "status": "Success"}
-        ]
+        "active_alerts": len(alerts_list),
+        "urgent": urgent,
+        "warning": warning,
+        "recent_events": recent
     }
 
 @router.get("/all")
@@ -42,8 +51,8 @@ async def get_all_alerts():
             failures = mem.get_events(topic="gate/failed", since_id=0)
 
             alerts = []
+            import json
             for f in failures:
-                import json
                 payload = json.loads(f['payload'])
                 alerts.append({
                     "id": f['id'],

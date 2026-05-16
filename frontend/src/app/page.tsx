@@ -8,15 +8,20 @@ import ThroughputChart from "@/components/charts/ThroughputChart";
 import DeviceStatusChart from "@/components/charts/DeviceStatusChart";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || 'nanoc-secret-key';
 
 const fetchStatus = async () => {
-  const res = await fetch(`${API_URL}/api/monitoring/status`);
+  const res = await fetch(`${API_URL}/api/monitoring/status`, {
+    headers: { 'X-API-Key': API_KEY }
+  });
   if (!res.ok) throw new Error("Failed to fetch status");
   return res.json();
 };
 
 const fetchAlertsSummary = async () => {
-  const res = await fetch(`${API_URL}/api/alerts/summary`);
+  const res = await fetch(`${API_URL}/api/alerts/summary`, {
+    headers: { 'X-API-Key': API_KEY }
+  });
   if (!res.ok) throw new Error("Failed to fetch alerts summary");
   return res.json();
 };

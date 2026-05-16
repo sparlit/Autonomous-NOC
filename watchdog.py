@@ -16,8 +16,17 @@ def watchdog():
         time.sleep(30)
         # Check if process is still running
         if process.poll() is not None:
-            print("NANOC crashed or stopped. Restarting...")
-            # Here we could check if a 'bad evolution' happened and revert
+            print(f"NANOC crashed or stopped with return code {process.returncode}. Restarting...")
+
+            # Check if we should revert from backup
+            backup_dir = "nanoc_backup"
+            if os.path.exists(backup_dir):
+                import shutil
+                print("Bad evolution suspected. Reverting from backup...")
+                if os.path.exists("nanoc"):
+                    shutil.rmtree("nanoc")
+                shutil.copytree(backup_dir, "nanoc")
+
             process = start_nanoc()
         else:
             # Check for 'heartbeat' file updated by NANOC
@@ -27,7 +36,6 @@ def watchdog():
                 if time.time() - mtime > 120: # 2 minutes without heartbeat
                     print("NANOC frozen. Killing and restarting...")
                     process.kill()
-                    # Revert logic could be here: shutil.copytree("backup/nanoc", "nanoc")
                     process = start_nanoc()
 
 if __name__ == "__main__":

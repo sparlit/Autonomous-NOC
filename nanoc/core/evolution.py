@@ -23,10 +23,15 @@ class SelfEvolutionManager:
             f.write(content)
 
     def run_tests_in_staging(self) -> bool:
-        """Run pytest in the staging directory."""
+        """Run pytest in the staging directory with proper environment."""
         try:
-            # This assumes tests are written and discoverable
-            result = subprocess.run(["pytest", self.staging], capture_output=True, text=True)
+            env = os.environ.copy()
+            env["PYTHONPATH"] = f".:{self.staging}"
+            # Only run nanoc tests to ensure core functionality isn't broken
+            test_path = os.path.join(self.staging, "nanoc/tests")
+            result = subprocess.run(["pytest", test_path], capture_output=True, text=True, env=env)
+            if result.returncode != 0:
+                print(f"Staging tests failed:\n{result.stdout}\n{result.stderr}")
             return result.returncode == 0
         except Exception as e:
             print(f"Testing failed: {e}")

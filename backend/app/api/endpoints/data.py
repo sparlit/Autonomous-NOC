@@ -4,7 +4,6 @@ from nanoc.core.config import settings as nanoc_settings
 import sqlite3
 
 router = APIRouter()
-memory = Memory(nanoc_settings.DB_PATH)
 
 @router.get("/topology")
 async def get_topology():
@@ -25,7 +24,8 @@ async def get_topology():
                 - "to": destination node id string
                 - "label": link descriptor (e.g., bandwidth)
     """
-    topology = memory.get_knowledge("network_topology")
+    mem = Memory(nanoc_settings.DB_PATH)
+    topology = mem.get_knowledge("network_topology")
     if topology:
         return topology
 
@@ -56,6 +56,14 @@ async def get_agents_status():
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM agents")
         return [dict(row) for row in cursor.fetchall()]
+
+@router.get("/search")
+async def search_knowledge(query: str):
+    """
+    Search knowledge base.
+    """
+    mem = Memory(nanoc_settings.DB_PATH)
+    return mem.search_knowledge(query)
 
 @router.get("/tasks")
 async def get_tasks(project_id: str = None):

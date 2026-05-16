@@ -12,6 +12,7 @@ import { Separator } from "@/components/ui/separator";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Providers from "@/components/providers";
 import { SystemStatus } from "@/components/layout/system-status";
+import { KnowledgeSearch } from "@/components/layout/knowledge-search";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -46,7 +47,10 @@ export default function RootLayout({
                 <header className="flex h-16 shrink-0 items-center gap-2 px-4">
                   <SidebarTrigger className="-ml-1" />
                   <Separator orientation="vertical" className="mr-2 h-4" />
-                  <SystemStatus />
+                  <div className="flex-1 flex items-center gap-4">
+                    <KnowledgeSearch />
+                    <SystemStatus />
+                  </div>
                 </header>
                 <main className="flex flex-1 flex-col gap-4 p-4 pt-0">
                   {children}
