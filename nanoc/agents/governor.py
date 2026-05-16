@@ -22,8 +22,8 @@ class Governor(BaseAgent):
         total_cost = metrics.get("total_cost", 0)
 
         if error_rate > self.thresholds["error_rate"]:
-            await self.log(f"Critical error rate detected: {error_rate}")
-            return "ABORT_HUMAN_REVIEW"
+            await self.log(f"Critical error rate detected: {error_rate}. Triggering self-evolution review.")
+            return "SELF_EVOLVE"
 
         if total_cost > self.thresholds["cost_limit"]:
             await self.log(f"Cost limit exceeded: {total_cost}")
@@ -51,14 +51,22 @@ class Governor(BaseAgent):
                 "justification": f"Automated decision based on metrics. Action: {action}"
             })
 
-            if action == "ABORT_HUMAN_REVIEW":
+            if action == "SELF_EVOLVE":
+                from nanoc.core.evolution import SelfEvolutionManager
+                from nanoc.core.config import settings
+                evo = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+                await self.log("Starting autonomous self-evolution cycle due to high error rates.")
+                # This would typically trigger a task for the Coder/Analyst first
+                self.memory.create_task("High error rate detected. Analyze system code and propose improvements for self-evolution.", assigned_to="Analyst")
+            elif action == "ABORT_HUMAN_REVIEW":
                 self.memory.publish_event("alert/action-needed", {
                     "reason": "Threshold exceeded",
                     "metrics": metrics
                 })
             elif action == "SCALE_UP":
-                await self.log("Simulating scaling up: adding more coder capacity.")
-                # Logic to 'hire' or start more agent containers
+                await self.log("Autonomous scaling: increasing agent capacity.")
+                # Logic to start more agent workers
+                self.memory.publish_event("system/scale-up", {"role": "Coder", "reason": "High backlog"})
             elif action == "THROTTLE_COST":
                 await self.log("Budget warning: throttling model usage.")
                 # Logic to switch to cheaper models

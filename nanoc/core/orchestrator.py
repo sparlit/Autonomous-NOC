@@ -82,6 +82,17 @@ class Orchestrator:
 
             if task:
                 role = task['assigned_to']
+                if role == "Human":
+                    # HITL: Human intervention required
+                    print(f"[Orchestrator] Task {task['id']} requires HUMAN intervention: {task['description']}")
+                    # Update status to indicate waiting for human
+                    with sqlite3.connect(self.memory.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("UPDATE tasks SET status = 'waiting_for_human' WHERE id = ?", (task['id'],))
+                        conn.commit()
+                    self.memory.publish_event("hitl/action-required", {"task_id": task['id'], "description": task['description']})
+                    continue
+
                 if role in self.agents:
                     agent = self.agents[role]
                     await agent.log(f"Processing task {task['id']}: {task['description']}")

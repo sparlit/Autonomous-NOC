@@ -77,21 +77,23 @@ class Memory:
     def publish_event(self, topic: str, payload: Dict[str, Any], schema_version: str = "1.0"):
         """
         Publish an immutable event record to the events table.
-        
-        The provided payload is serialized to JSON and stored together with the topic, schema version, and the current timestamp.
-        
-        Parameters:
-            topic (str): Topic name categorizing the event.
-            payload (Dict[str, Any]): JSON-serializable event payload to store.
-            schema_version (str): Version identifier for the payload schema (defaults to "1.0").
-        
-        Returns:
-            int: The newly inserted event row ID.
         """
+        # Ensure payload is JSON serializable, handle potential binary data
+        def sanitize(obj):
+            if isinstance(obj, bytes):
+                return obj.decode('utf-8', errors='replace')
+            if isinstance(obj, dict):
+                return {k: sanitize(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [sanitize(i) for i in obj]
+            return obj
+
+        sanitized_payload = sanitize(payload)
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('INSERT INTO events (topic, payload, schema_version, timestamp) VALUES (?, ?, ?, ?)',
-                           (topic, json.dumps(payload), schema_version, datetime.now()))
+                           (topic, json.dumps(sanitized_payload), schema_version, datetime.now()))
             conn.commit()
             return cursor.lastrowid
 
@@ -143,6 +145,12 @@ class Memory:
             conn.commit()
 
     def add_log(self, agent_id: str, content: str):
+        # Ensure content is string
+        if isinstance(content, bytes):
+            content = content.decode('utf-8', errors='replace')
+        elif not isinstance(content, str):
+            content = str(content)
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('INSERT INTO logs (agent_id, content, timestamp) VALUES (?, ?, ?)',
@@ -164,6 +172,22 @@ class Memory:
             if row:
                 return json.loads(row[0])
             return None
+
+    def search_knowledge(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        Search for knowledge entries containing the query string in their key or value.
+        (Primitive RAG capability)
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            # Use LIKE for simple keyword matching
+            cursor.execute('''
+                SELECT key, value FROM knowledge
+                WHERE key LIKE ? OR value LIKE ?
+                ORDER BY updated_at DESC LIMIT ?
+            ''', (f"%{query}%", f"%{query}%", limit))
+            return [dict(row) for row in cursor.fetchall()]
 
     def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None) -> int:
         with sqlite3.connect(self.db_path) as conn:

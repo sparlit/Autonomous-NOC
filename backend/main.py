@@ -1,6 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, Security, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi.security.api_key import APIKeyHeader
 from app.api.endpoints import monitoring, alerts, websockets, data
 from app.core.config import settings
 import asyncio
@@ -41,6 +41,13 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    if not api_key_header or api_key_header != settings.API_KEY:
+        raise HTTPException(status_code=403, detail="Could not validate API Key")
+    return api_key_header
+
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 
 app.add_middleware(
@@ -51,9 +58,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(monitoring.router, prefix="/api/monitoring", tags=["monitoring"])
-app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])
-app.include_router(data.router, prefix="/api/data", tags=["data"])
+app.include_router(monitoring.router, prefix="/api/monitoring", tags=["monitoring"], dependencies=[Depends(get_api_key)])
+app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"], dependencies=[Depends(get_api_key)])
+app.include_router(data.router, prefix="/api/data", tags=["data"], dependencies=[Depends(get_api_key)])
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
