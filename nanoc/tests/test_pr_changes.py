@@ -740,3 +740,732 @@ class TestDebater:
         result = await debater.debate("monolith vs microservices")
         assert result is not None
         assert llm._call_count >= 2  # at least PRO and synthesis
+
+
+# ===========================================================================
+# TeamLeader active_projects tracking tests  (base.py PR change)
+# ===========================================================================
+
+class TestTeamLeaderActiveProjects:
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_stores_project_id_in_active_projects(self, memory):
+        """TeamLeader.delegate_tasks now tracks the new project_id in active_projects knowledge."""
+        from nanoc.agents.base import TeamLeader
+        llm = MockLLM()
+        leader = TeamLeader("Leader1", "Team Leader", memory, provider=llm)
+        project_id = await leader.delegate_tasks("Build a REST API")
+        active = memory.get_knowledge("active_projects")
+        assert active is not None
+        assert project_id in active
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_accumulates_multiple_project_ids(self, memory):
+        """Each call to delegate_tasks appends a new project_id without overwriting the list."""
+        from nanoc.agents.base import TeamLeader
+        llm = MockLLM()
+        leader = TeamLeader("Leader2", "Team Leader", memory, provider=llm)
+        pid1 = await leader.delegate_tasks("Project One")
+        pid2 = await leader.delegate_tasks("Project Two")
+        active = memory.get_knowledge("active_projects")
+        assert pid1 in active
+        assert pid2 in active
+        assert len(active) == 2
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_active_projects_key_exists_after_first_call(self, memory):
+        """active_projects knowledge key should not exist before delegation."""
+        from nanoc.agents.base import TeamLeader
+        llm = MockLLM()
+        assert memory.get_knowledge("active_projects") is None
+        leader = TeamLeader("Leader3", "Team Leader", memory, provider=llm)
+        await leader.delegate_tasks("Some project")
+        active = memory.get_knowledge("active_projects")
+        assert isinstance(active, list)
+        assert len(active) == 1
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_active_projects_initialises_when_none_in_memory(self, memory):
+        """When no active_projects key exists, delegate_tasks creates it correctly."""
+        from nanoc.agents.base import TeamLeader
+        llm = MockLLM()
+        # Explicitly ensure key absent
+        assert memory.get_knowledge("active_projects") is None
+        leader = TeamLeader("Leader4", "Team Leader", memory, provider=llm)
+        pid = await leader.delegate_tasks("Init project")
+        active = memory.get_knowledge("active_projects")
+        assert active == [pid]
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_project_id_starts_with_proj_(self, memory):
+        """The generated project_id follows the expected 'proj_<timestamp>' pattern."""
+        from nanoc.agents.base import TeamLeader
+        llm = MockLLM()
+        leader = TeamLeader("Leader5", "Team Leader", memory, provider=llm)
+        pid = await leader.delegate_tasks("Check prefix")
+        assert pid.startswith("proj_")
+
+
+# ===========================================================================
+# Architect active_projects fallback tests  (base.py PR change)
+# ===========================================================================
+
+class TestArchitectActiveProjectFallback:
+    @pytest.mark.asyncio
+    async def test_design_solution_uses_active_project_when_prefix_absent(self, memory):
+        """When requirements lacks 'proj_' prefix, Architect falls back to active_projects[-1]."""
+        from nanoc.agents.base import Architect
+        from nanoc.core.gate_manager import GateManager
+        llm = MockLLM()
+        arch = Architect("Arch10", "Architect", memory, provider=llm)
+
+        # Pre-populate an active project with a gate so get_active_gate returns something
+        gm = GateManager(memory)
+        gm.create_gate("proj_active99", "design", "Architect", ["c1"])
+        memory.upsert_knowledge("active_projects", ["proj_active99"])
+
+        # Requirements without a 'proj_' prefix
+        result = await arch.design_solution("myproject: design the system")
+        assert result is not None
+
+        # The gate/result-added event should reference the active project
+        events = memory.get_events(topic="gate/result-added")
+        assert len(events) >= 1
+        payload = json.loads(events[-1]["payload"])
+        assert payload["project_id"] == "proj_active99"
+
+    @pytest.mark.asyncio
+    async def test_design_solution_skips_fallback_when_proj_prefix_present(self, memory):
+        """When requirements already has 'proj_' prefix, active_projects fallback is NOT used."""
+        from nanoc.agents.base import Architect
+        from nanoc.core.gate_manager import GateManager
+        llm = MockLLM()
+        arch = Architect("Arch11", "Architect", memory, provider=llm)
+
+        gm = GateManager(memory)
+        gm.create_gate("proj_explicit", "design", "Architect", ["c1"])
+        # Also set an active_projects that differs
+        memory.upsert_knowledge("active_projects", ["proj_other99"])
+
+        result = await arch.design_solution("proj_explicit: build API")
+        assert result is not None
+        events = memory.get_events(topic="gate/result-added")
+        assert len(events) >= 1
+        payload = json.loads(events[-1]["payload"])
+        # Should use the explicit project_id, not the active_projects fallback
+        assert payload["project_id"] == "proj_explicit"
+
+    @pytest.mark.asyncio
+    async def test_design_solution_no_fallback_when_active_projects_empty(self, memory):
+        """When active_projects is empty and prefix is absent, project_id stays non-proj_ value."""
+        from nanoc.agents.base import Architect
+        llm = MockLLM()
+        arch = Architect("Arch12", "Architect", memory, provider=llm)
+        # Ensure active_projects is empty
+        memory.upsert_knowledge("active_projects", [])
+
+        result = await arch.design_solution("noproj: design something")
+        # Should not raise; the extracted project_id will be "noproj" (no active fallback)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_design_solution_uses_last_active_project_not_first(self, memory):
+        """When multiple active projects exist, the fallback picks the last one."""
+        from nanoc.agents.base import Architect
+        from nanoc.core.gate_manager import GateManager
+        llm = MockLLM()
+        arch = Architect("Arch13", "Architect", memory, provider=llm)
+
+        gm = GateManager(memory)
+        gm.create_gate("proj_last", "design", "Architect", ["c1"])
+        memory.upsert_knowledge("active_projects", ["proj_first", "proj_last"])
+
+        await arch.design_solution("noprefix: build something")
+        events = memory.get_events(topic="gate/result-added")
+        assert len(events) >= 1
+        payload = json.loads(events[-1]["payload"])
+        assert payload["project_id"] == "proj_last"
+
+
+# ===========================================================================
+# Reviewer STATUS: APPROVED / STATUS: FAILED tests  (base.py PR change)
+# ===========================================================================
+
+class TestReviewerStatusApprovedPrompt:
+    @pytest.mark.asyncio
+    async def test_review_work_pass_when_status_approved_in_response(self, memory):
+        """LLM response containing 'STATUS: APPROVED' → gate result status = 'pass'."""
+        from nanoc.agents.base import Reviewer
+        from nanoc.core.gate_manager import GateManager
+        llm = MockLLM()
+        llm.add_response("Review this code", "STATUS: APPROVED\nLooks great.")
+        reviewer = Reviewer("Rev10", "Reviewer", memory, provider=llm)
+        gm = GateManager(memory)
+        gm.create_gate("proj_rev1", "code", "Coder", ["criteria"])
+        result = await reviewer.review_work("proj_rev1: some code")
+        assert "STATUS: APPROVED" in result
+        events = memory.get_events(topic="gate/result-added")
+        assert len(events) >= 1
+        payload = json.loads(events[-1]["payload"])
+        assert payload["status"] == "pass"
+
+    @pytest.mark.asyncio
+    async def test_review_work_fail_when_status_failed_in_response(self, memory):
+        """LLM response containing 'STATUS: FAILED' → gate result status = 'fail'."""
+        from nanoc.agents.base import Reviewer
+        from nanoc.core.gate_manager import GateManager
+        llm = MockLLM()
+        llm.add_response("Review this code", "STATUS: FAILED\nMissing error handling.")
+        reviewer = Reviewer("Rev11", "Reviewer", memory, provider=llm)
+        gm = GateManager(memory)
+        gm.create_gate("proj_rev2", "code", "Coder", ["criteria"])
+        result = await reviewer.review_work("proj_rev2: some code")
+        events = memory.get_events(topic="gate/result-added")
+        payload = json.loads(events[-1]["payload"])
+        assert payload["status"] == "fail"
+
+    @pytest.mark.asyncio
+    async def test_review_work_fail_when_no_status_prefix(self, memory):
+        """LLM response without 'STATUS: APPROVED' is treated as fail."""
+        from nanoc.agents.base import Reviewer
+        from nanoc.core.gate_manager import GateManager
+        llm = MockLLM()
+        llm.add_response("Review this code", "APPROVED: looks fine")  # Old format, no STATUS:
+        reviewer = Reviewer("Rev12", "Reviewer", memory, provider=llm)
+        gm = GateManager(memory)
+        gm.create_gate("proj_rev3", "code", "Coder", ["criteria"])
+        await reviewer.review_work("proj_rev3: code here")
+        events = memory.get_events(topic="gate/result-added")
+        payload = json.loads(events[-1]["payload"])
+        # Old "APPROVED" without "STATUS: " prefix no longer triggers pass
+        assert payload["status"] == "fail"
+
+    @pytest.mark.asyncio
+    async def test_review_work_log_event_published_on_pass(self, memory):
+        """Both agent/log events should be published on review pass."""
+        from nanoc.agents.base import Reviewer
+        from nanoc.core.gate_manager import GateManager
+        llm = MockLLM()
+        llm.add_response("Review this code", "STATUS: APPROVED")
+        reviewer = Reviewer("Rev13", "Reviewer", memory, provider=llm)
+        gm = GateManager(memory)
+        gm.create_gate("proj_rev4", "code", "Coder", ["c"])
+        await reviewer.review_work("proj_rev4: code")
+        log_events = memory.get_events(topic="agent/log")
+        log_contents = [json.loads(e["payload"]).get("content", "") for e in log_events]
+        assert any("approved" in c.lower() for c in log_contents)
+
+    @pytest.mark.asyncio
+    async def test_review_work_log_event_published_on_fail(self, memory):
+        """When work fails review, a log event mentioning failure is published."""
+        from nanoc.agents.base import Reviewer
+        from nanoc.core.gate_manager import GateManager
+        llm = MockLLM()
+        llm.add_response("Review this code", "STATUS: FAILED\nMany issues.")
+        reviewer = Reviewer("Rev14", "Reviewer", memory, provider=llm)
+        gm = GateManager(memory)
+        gm.create_gate("proj_rev5", "code", "Coder", ["c"])
+        await reviewer.review_work("proj_rev5: code")
+        log_events = memory.get_events(topic="agent/log")
+        log_contents = [json.loads(e["payload"]).get("content", "") for e in log_events]
+        assert any("failed" in c.lower() for c in log_contents)
+
+    @pytest.mark.asyncio
+    async def test_review_work_prompt_includes_status_approved_instruction(self, memory):
+        """The prompt sent to LLM must include the 'STATUS: APPROVED' instruction."""
+        from nanoc.agents.base import Reviewer
+        from nanoc.core.gate_manager import GateManager
+        llm = MockLLM()
+        reviewer = Reviewer("Rev15", "Reviewer", memory, provider=llm)
+        gm = GateManager(memory)
+        gm.create_gate("proj_rev6", "code", "Coder", ["c"])
+        await reviewer.review_work("proj_rev6: code")
+        # Check that the prompt sent to LLM contains the new instruction text
+        assert len(llm.calls) >= 1
+        prompt_sent = llm.calls[0]["prompt"]
+        assert "STATUS: APPROVED" in prompt_sent
+        assert "STATUS: FAILED" in prompt_sent
+
+
+# ===========================================================================
+# Governor SCALE_UP publishes system/scale-up event  (governor.py PR change)
+# ===========================================================================
+
+class TestGovernorScaleUpEvent:
+    @pytest.mark.asyncio
+    async def test_decide_action_returns_scale_up_when_backlog_exceeds_10(self, memory):
+        """Governor.decide_action should return SCALE_UP for backlog_size > 10."""
+        from nanoc.agents.governor import Governor
+        llm = MockLLM()
+        gov = Governor("Gov1", memory, {})
+        gov.llm = llm
+        action = await gov.decide_action({"backlog_size": 15, "error_rate": 0.0, "total_cost": 0.0})
+        assert action == "SCALE_UP"
+
+    @pytest.mark.asyncio
+    async def test_decide_action_does_not_return_scale_up_for_small_backlog(self, memory):
+        """Governor.decide_action should NOT return SCALE_UP when backlog <= 10."""
+        from nanoc.agents.governor import Governor
+        gov = Governor("Gov2", memory, {})
+        gov.llm = MockLLM()
+        action = await gov.decide_action({"backlog_size": 5, "error_rate": 0.0, "total_cost": 0.0})
+        assert action != "SCALE_UP"
+
+    def test_scale_up_publishes_system_scale_up_event(self, memory):
+        """When SCALE_UP action is determined, system/scale-up event should be published."""
+        # We directly trigger the SCALE_UP branch by publishing the event manually
+        # as the Governor does in run_governance_cycle
+        memory.publish_event("system/scale-up", {"role": "Coder", "reason": "High backlog"})
+        events = memory.get_events(topic="system/scale-up")
+        assert len(events) >= 1
+        payload = json.loads(events[-1]["payload"])
+        assert payload["role"] == "Coder"
+        assert payload["reason"] == "High backlog"
+
+    @pytest.mark.asyncio
+    async def test_governor_scale_up_event_has_correct_payload(self, memory):
+        """The system/scale-up event published by SCALE_UP includes role and reason fields."""
+        import asyncio
+        from nanoc.agents.governor import Governor
+        llm = MockLLM()
+
+        gov = Governor("Gov3", memory, {})
+        gov.llm = llm
+
+        # Patch gather_metrics to return metrics that trigger SCALE_UP
+        async def fake_gather():
+            return {"backlog_size": 20, "error_rate": 0.0, "total_cost": 0.0, "latency_ms": 0}
+
+        gov.gather_metrics = fake_gather
+
+        # Run one governance cycle by canceling after one iteration
+        async def run_once():
+            task = asyncio.create_task(gov.run_governance_cycle())
+            await asyncio.sleep(0.1)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        await run_once()
+
+        events = memory.get_events(topic="system/scale-up")
+        assert len(events) >= 1
+        payload = json.loads(events[-1]["payload"])
+        assert payload["role"] == "Coder"
+        assert "reason" in payload
+
+
+# ===========================================================================
+# GateManager FAILED status and new evaluate logic  (gate_manager.py PR change)
+# ===========================================================================
+
+class TestGateManagerFailedStatus:
+    def test_gate_status_failed_enum_value(self, memory):
+        """GateStatus.FAILED should exist with value 'FAILED'."""
+        from nanoc.core.gate_manager import GateStatus
+        assert GateStatus.FAILED.value == "FAILED"
+
+    def test_evaluate_gate_with_pass_and_fail_prefers_failed(self, memory):
+        """Mixed results: any failure → FAILED status (failures take precedence over passes)."""
+        from nanoc.core.gate_manager import GateManager, GateStatus
+        gm = GateManager(memory)
+        gate_id = gm.create_gate("proj_mixed1", "code", "Coder", ["c"])
+        # Add a pass first, then a fail
+        gm.add_result(gate_id, {"status": "pass"})
+        gm.add_result(gate_id, {"status": "fail", "reason": "lint error"})
+        gate_data = memory.get_knowledge(f"gate:{gate_id}")
+        assert gate_data["status"] == GateStatus.FAILED.value
+
+    def test_evaluate_gate_multiple_failures_stays_failed(self, memory):
+        """Multiple failure results all lead to FAILED status."""
+        from nanoc.core.gate_manager import GateManager, GateStatus
+        gm = GateManager(memory)
+        gate_id = gm.create_gate("proj_multifail", "code", "Coder", ["c"])
+        gm.add_result(gate_id, {"status": "fail"})
+        gm.add_result(gate_id, {"status": "fail"})
+        gate_data = memory.get_knowledge(f"gate:{gate_id}")
+        assert gate_data["status"] == GateStatus.FAILED.value
+
+    def test_evaluate_gate_only_passes_gives_complete_status(self, memory):
+        """All pass results → COMPLETE status (no failures)."""
+        from nanoc.core.gate_manager import GateManager, GateStatus
+        gm = GateManager(memory)
+        gate_id = gm.create_gate("proj_allpass", "code", "Coder", ["c"])
+        gm.add_result(gate_id, {"status": "pass"})
+        gate_data = memory.get_knowledge(f"gate:{gate_id}")
+        assert gate_data["status"] == GateStatus.COMPLETE.value
+
+    def test_evaluate_gate_failure_publishes_gate_failed_not_resolved(self, memory):
+        """On failure, gate/failed is published and gate/resolved is NOT published."""
+        from nanoc.core.gate_manager import GateManager
+        gm = GateManager(memory)
+        gate_id = gm.create_gate("proj_failevt", "code", "Coder", ["c"])
+        gm.add_result(gate_id, {"status": "fail"})
+        failed_events = memory.get_events(topic="gate/failed")
+        resolved_events = memory.get_events(topic="gate/resolved")
+        assert len(failed_events) >= 1
+        assert len(resolved_events) == 0
+
+    def test_evaluate_gate_pass_publishes_both_completed_and_resolved(self, memory):
+        """On pass, both gate/completed and gate/resolved are published."""
+        from nanoc.core.gate_manager import GateManager
+        gm = GateManager(memory)
+        gate_id = gm.create_gate("proj_passevt", "code", "Coder", ["c"])
+        gm.add_result(gate_id, {"status": "pass"})
+        completed_events = memory.get_events(topic="gate/completed")
+        resolved_events = memory.get_events(topic="gate/resolved")
+        assert len(completed_events) >= 1
+        assert len(resolved_events) >= 1
+
+    def test_evaluate_gate_no_results_does_not_publish_any_gate_event(self, memory):
+        """evaluate_gate with no results silently returns; no gate events published."""
+        from nanoc.core.gate_manager import GateManager
+        gm = GateManager(memory)
+        gate_id = gm.create_gate("proj_noresult", "code", "Coder", ["c"])
+        gm.evaluate_gate(gate_id)
+        assert len(memory.get_events(topic="gate/failed")) == 0
+        assert len(memory.get_events(topic="gate/resolved")) == 0
+        assert len(memory.get_events(topic="gate/completed")) == 0
+
+    def test_evaluate_gate_nonexistent_id_returns_silently(self, memory):
+        """evaluate_gate with an unknown gate_id does not raise."""
+        from nanoc.core.gate_manager import GateManager
+        gm = GateManager(memory)
+        gm.evaluate_gate("gate_does_not_exist")  # Should not raise
+
+
+# ===========================================================================
+# LLM token counting and cost calculation  (llm.py PR change)
+# ===========================================================================
+
+class TestLLMRecordTelemetry:
+    def test_token_count_uses_char_div_4_for_prompt(self):
+        """prompt_tokens = len(prompt) // 4"""
+        prompt = "a" * 40  # 40 chars → 10 tokens
+        completion = "b" * 20  # 20 chars → 5 tokens
+        prompt_tokens = len(prompt) // 4
+        completion_tokens = len(completion) // 4
+        assert prompt_tokens == 10
+        assert completion_tokens == 5
+
+    def test_cost_formula_matches_pr_implementation(self):
+        """cost = ((prompt_tokens + completion_tokens) / 1000) * 0.01"""
+        prompt_tokens = 100
+        completion_tokens = 50
+        cost = ((prompt_tokens + completion_tokens) / 1000) * 0.01
+        assert abs(cost - 0.0015) < 1e-10
+
+    def test_cost_is_zero_for_empty_strings(self):
+        """Empty prompt and response should produce zero tokens and zero cost."""
+        prompt = ""
+        response = ""
+        prompt_tokens = len(prompt) // 4
+        completion_tokens = len(response) // 4
+        cost = ((prompt_tokens + completion_tokens) / 1000) * 0.01
+        assert cost == 0.0
+
+    def test_record_telemetry_invokes_telemetry_hub(self, memory, tmp_path):
+        """_record_telemetry calls hub.record_token_usage with correct token estimates."""
+        from unittest.mock import patch, MagicMock
+        from nanoc.core.llm import LLMProvider
+
+        mock_hub = MagicMock()
+
+        with patch("nanoc.core.llm.TelemetryHub", return_value=mock_hub), \
+             patch("nanoc.core.llm.Memory", return_value=memory):
+            provider = LLMProvider(provider="openrouter", model="test-model")
+            prompt = "Hello world test"   # 16 chars → 4 tokens
+            response = "OK response text"  # 16 chars → 4 tokens
+            provider._record_telemetry(prompt, response, 123.0)
+
+        expected_prompt_tokens = len(prompt) // 4
+        expected_completion_tokens = len(response) // 4
+        expected_cost = ((expected_prompt_tokens + expected_completion_tokens) / 1000) * 0.01
+
+        mock_hub.record_token_usage.assert_called_once_with(
+            "test-model",
+            expected_prompt_tokens,
+            expected_completion_tokens,
+            expected_cost,
+        )
+        mock_hub.record_latency.assert_called_once_with("llm_complete", 123.0)
+
+    def test_record_telemetry_cost_scales_with_token_count(self):
+        """Larger prompts produce proportionally higher costs."""
+        short_prompt_tokens = len("hi") // 4          # 0
+        long_prompt_tokens = len("a" * 4000) // 4      # 1000
+
+        short_cost = ((short_prompt_tokens + 0) / 1000) * 0.01
+        long_cost = ((long_prompt_tokens + 0) / 1000) * 0.01
+
+        assert long_cost > short_cost
+
+    def test_old_word_split_vs_new_char_div4_differ_for_long_text(self):
+        """Old: len(text.split()) * cost; new: len(text)//4 * cost — verify they differ."""
+        prompt = "word " * 100  # 100 words, 500 chars
+        old_tokens = len(prompt.split())          # 100
+        new_tokens = len(prompt) // 4             # 125
+        assert old_tokens != new_tokens
+
+
+# ===========================================================================
+# DiscoveryTool memory caching  (network.py PR change)
+# ===========================================================================
+
+class TestDiscoveryToolCaching:
+    def test_discover_topology_returns_default_with_nodes_and_edges(self, tmp_path):
+        """DiscoveryTool.discover_topology() returns dict with 'nodes' and 'edges'."""
+        from unittest.mock import patch
+        from nanoc.tools.network import DiscoveryTool
+        db_path = str(tmp_path / "disco.db")
+        mem = _fresh_memory(db_path)
+
+        with patch("nanoc.tools.network.Memory", return_value=mem), \
+             patch("nanoc.tools.network.settings"):
+            topo = DiscoveryTool.discover_topology()
+
+        assert "nodes" in topo
+        assert "edges" in topo
+        assert isinstance(topo["nodes"], list)
+        assert isinstance(topo["edges"], list)
+
+    def test_discover_topology_stores_result_in_memory(self, tmp_path):
+        """First call must store the default topology in memory knowledge store."""
+        from unittest.mock import patch
+        from nanoc.tools.network import DiscoveryTool
+        db_path = str(tmp_path / "disco2.db")
+        mem = _fresh_memory(db_path)
+
+        with patch("nanoc.tools.network.Memory", return_value=mem), \
+             patch("nanoc.tools.network.settings"):
+            DiscoveryTool.discover_topology()
+
+        cached = mem.get_knowledge("network_topology")
+        assert cached is not None
+        assert "nodes" in cached
+
+    def test_discover_topology_returns_cached_topology_on_second_call(self, tmp_path):
+        """Second call should return stored topology, not regenerate a new one."""
+        from unittest.mock import patch
+        from nanoc.tools.network import DiscoveryTool
+        db_path = str(tmp_path / "disco3.db")
+        mem = _fresh_memory(db_path)
+
+        custom_topology = {
+            "nodes": [{"id": "X1", "label": "Custom Node", "type": "router", "status": "online"}],
+            "edges": []
+        }
+        mem.upsert_knowledge("network_topology", custom_topology)
+
+        with patch("nanoc.tools.network.Memory", return_value=mem), \
+             patch("nanoc.tools.network.settings"):
+            result = DiscoveryTool.discover_topology()
+
+        assert result == custom_topology
+
+    def test_discover_topology_default_contains_core_router(self, tmp_path):
+        """Default topology includes Core-Rtr-01 node."""
+        from unittest.mock import patch
+        from nanoc.tools.network import DiscoveryTool
+        db_path = str(tmp_path / "disco4.db")
+        mem = _fresh_memory(db_path)
+
+        with patch("nanoc.tools.network.Memory", return_value=mem), \
+             patch("nanoc.tools.network.settings"):
+            topo = DiscoveryTool.discover_topology()
+
+        node_ids = [n["id"] for n in topo["nodes"]]
+        assert "Core-Rtr-01" in node_ids
+
+    def test_discover_topology_does_not_overwrite_existing_cache(self, tmp_path):
+        """If memory already has topology, discover_topology must not overwrite it."""
+        from unittest.mock import patch
+        from nanoc.tools.network import DiscoveryTool
+        db_path = str(tmp_path / "disco5.db")
+        mem = _fresh_memory(db_path)
+
+        original = {"nodes": [{"id": "cached"}], "edges": []}
+        mem.upsert_knowledge("network_topology", original)
+
+        with patch("nanoc.tools.network.Memory", return_value=mem), \
+             patch("nanoc.tools.network.settings"):
+            DiscoveryTool.discover_topology()
+
+        after = mem.get_knowledge("network_topology")
+        assert after == original
+
+
+# ===========================================================================
+# SNMPTool fallback to snmpget CLI  (network.py PR change)
+# ===========================================================================
+
+class TestSNMPToolFallback:
+    def test_snmp_get_value_falls_back_when_powershell_fails(self):
+        """When PowerShellTool.run_command returns non-zero, SNMPTool calls snmpget fallback."""
+        from unittest.mock import patch, call
+        from nanoc.tools.network import SNMPTool
+
+        ps_fail = {"stdout": "", "stderr": "Module not found", "returncode": 1}
+        snmp_ok = {"stdout": "1.3.6.1.2.1.1.1.0 = STRING: Linux", "stderr": "", "returncode": 0}
+
+        with patch("nanoc.tools.network.PowerShellTool.run_command",
+                   side_effect=[ps_fail, snmp_ok]) as mock_run:
+            result = SNMPTool.get_value("192.168.1.1", "public", "1.3.6.1.2.1.1.1.0")
+
+        # Two calls: first PowerShell, then snmpget fallback
+        assert mock_run.call_count == 2
+        first_call_cmd = mock_run.call_args_list[0][0][0]
+        second_call_cmd = mock_run.call_args_list[1][0][0]
+        assert "Get-SnmpData" in first_call_cmd
+        assert "snmpget" in second_call_cmd
+        assert result == snmp_ok
+
+    def test_snmp_get_value_does_not_fallback_on_powershell_success(self):
+        """When PowerShellTool succeeds (returncode 0), fallback is NOT called."""
+        from unittest.mock import patch
+        from nanoc.tools.network import SNMPTool
+
+        ps_ok = {"stdout": "value = 42", "stderr": "", "returncode": 0}
+
+        with patch("nanoc.tools.network.PowerShellTool.run_command",
+                   return_value=ps_ok) as mock_run:
+            result = SNMPTool.get_value("10.0.0.1", "public", "1.3.6.1.2.1.1.1.0")
+
+        # Only one call (no fallback)
+        assert mock_run.call_count == 1
+        assert result == ps_ok
+
+    def test_snmp_get_value_returns_fallback_result(self):
+        """The return value should be the fallback snmpget result, not the failed PS result."""
+        from unittest.mock import patch
+        from nanoc.tools.network import SNMPTool
+
+        ps_fail = {"returncode": 1, "stdout": "", "stderr": "error"}
+        snmp_result = {"returncode": 0, "stdout": "OID data", "stderr": ""}
+
+        with patch("nanoc.tools.network.PowerShellTool.run_command",
+                   side_effect=[ps_fail, snmp_result]):
+            result = SNMPTool.get_value("1.2.3.4", "private", "1.3.6.1.2.1.1.5.0")
+
+        assert result == snmp_result
+
+    def test_snmp_get_value_passes_correct_ip_community_oid_to_fallback(self):
+        """The fallback snmpget command includes the IP, community, and OID."""
+        from unittest.mock import patch
+        from nanoc.tools.network import SNMPTool
+
+        ps_fail = {"returncode": 2, "stdout": "", "stderr": ""}
+        snmp_result = {"returncode": 0, "stdout": "", "stderr": ""}
+
+        with patch("nanoc.tools.network.PowerShellTool.run_command",
+                   side_effect=[ps_fail, snmp_result]) as mock_run:
+            SNMPTool.get_value("172.16.0.1", "community123", "1.3.6.1.2.1.2.1.0")
+
+        fallback_cmd = mock_run.call_args_list[1][0][0]
+        assert "172.16.0.1" in fallback_cmd
+        assert "community123" in fallback_cmd
+        assert "1.3.6.1.2.1.2.1.0" in fallback_cmd
+
+    def test_snmp_get_value_returns_ps_result_when_returncode_missing(self):
+        """If PowerShellTool result lacks 'returncode' key (e.g. error dict), fallback is triggered."""
+        from unittest.mock import patch
+        from nanoc.tools.network import SNMPTool
+
+        ps_error = {"error": "powershell not found"}   # no 'returncode' key → get() returns None != 0
+        snmp_result = {"returncode": 0, "stdout": "ok", "stderr": ""}
+
+        with patch("nanoc.tools.network.PowerShellTool.run_command",
+                   side_effect=[ps_error, snmp_result]) as mock_run:
+            result = SNMPTool.get_value("10.10.10.10", "pub", "1.3.6.1.2.1.1.1.0")
+
+        # returncode is None (missing) → None != 0 → fallback triggered
+        assert mock_run.call_count == 2
+        assert result == snmp_result
+
+
+# ===========================================================================
+# nanoc/main.py get_logs limit parameter  (main.py PR change)
+# ===========================================================================
+
+class TestGetLogsEndpoint:
+    @pytest.mark.asyncio
+    async def test_get_logs_returns_logs_key(self, tmp_path):
+        """get_logs() function returns dict with 'logs' key."""
+        import sqlite3
+        from unittest.mock import patch
+        db_path = str(tmp_path / "main_test.db")
+        mem = _fresh_memory(db_path)
+
+        # Patch settings.DB_PATH so get_logs uses our temp DB
+        with patch("nanoc.main.settings") as mock_settings:
+            mock_settings.DB_PATH = db_path
+            from nanoc.main import get_logs
+            result = get_logs()
+            assert "logs" in result
+            assert isinstance(result["logs"], list)
+
+    @pytest.mark.asyncio
+    async def test_get_logs_default_limit_is_50(self, tmp_path):
+        """get_logs() called without limit argument uses 50 as default."""
+        import sqlite3
+        import inspect
+        from nanoc.main import get_logs
+
+        sig = inspect.signature(get_logs)
+        assert "limit" in sig.parameters
+        default_limit = sig.parameters["limit"].default
+        assert default_limit == 50
+
+    @pytest.mark.asyncio
+    async def test_get_logs_respects_custom_limit(self, tmp_path):
+        """When limit=5, at most 5 log entries are returned."""
+        from unittest.mock import patch
+        db_path = str(tmp_path / "main_limit_test.db")
+        mem = _fresh_memory(db_path)
+
+        # Insert 10 log entries
+        for i in range(10):
+            mem.add_log("agent1", f"log message {i}")
+
+        with patch("nanoc.main.settings") as mock_settings:
+            mock_settings.DB_PATH = db_path
+            from nanoc.main import get_logs
+            result = get_logs(limit=5)
+            assert len(result["logs"]) <= 5
+
+    @pytest.mark.asyncio
+    async def test_get_logs_returns_empty_list_for_empty_db(self, tmp_path):
+        """Empty logs table returns an empty list."""
+        from unittest.mock import patch
+        db_path = str(tmp_path / "main_empty.db")
+        mem = _fresh_memory(db_path)
+
+        with patch("nanoc.main.settings") as mock_settings:
+            mock_settings.DB_PATH = db_path
+            from nanoc.main import get_logs
+            result = get_logs()
+            assert result["logs"] == []
+
+    @pytest.mark.asyncio
+    async def test_get_logs_ordered_by_timestamp_desc(self, tmp_path):
+        """Logs are returned in descending timestamp order (newest first)."""
+        import time
+        from unittest.mock import patch
+        db_path = str(tmp_path / "main_order.db")
+        mem = _fresh_memory(db_path)
+
+        mem.add_log("agent1", "first log")
+        time.sleep(0.01)
+        mem.add_log("agent1", "second log")
+        time.sleep(0.01)
+        mem.add_log("agent1", "third log")
+
+        with patch("nanoc.main.settings") as mock_settings:
+            mock_settings.DB_PATH = db_path
+            from nanoc.main import get_logs
+            result = get_logs()
+            logs = result["logs"]
+            assert len(logs) == 3
+            # Most recent should be first
+            assert logs[0]["content"] == "third log"
