@@ -115,19 +115,69 @@ class BaseAgent:
     def register_tool(self, name: str, func: callable):
         self.tools[name] = func
 
-class TeamLeader(BaseAgent):
-    async def delegate_tasks(self, project_description: str):
-        project_id = f"proj_{int(datetime.now().timestamp())}"
-        await self.log(f"Starting project {project_id}: {project_description}")
+class ProjectManager(BaseAgent):
+    def __init__(self, agent_id: str, memory: Memory, team_leaders: List[str] = None):
+        super().__init__(agent_id, "ProjectManager", memory)
+        self.team_leaders = team_leaders or []
 
-        # Track active projects
+    async def manage_project(self, project_description: str):
+        project_id = f"proj_{int(datetime.now().timestamp())}"
+        await self.log(f"Project Manager {self.agent_id} starting project {project_id}: {project_description}")
+
         active_projects = self.memory.get_knowledge("active_projects") or []
         active_projects.append(project_id)
         self.memory.upsert_knowledge("active_projects", active_projects)
 
+        self.memory.publish_event("project/pm-assigned", {
+            "project_id": project_id,
+            "description": project_description,
+            "manager": self.agent_id
+        })
+
+        # PM breaks down the project into work packages for Team Leaders
+        prompt = f"As a Project Manager, break this project into work packages for team leaders:\n{project_description}"
+        work_packages = await self.think(prompt)
+
+        packages = [p.strip() for p in work_packages.split("\n") if p.strip()]
+        for i, package in enumerate(packages):
+            # Round-robin assignment to team leaders
+            tl_role = self.team_leaders[i % len(self.team_leaders)]
+            self.memory.create_task(
+                f"Team Lead Task: {package}",
+                assigned_to=tl_role,
+                project_id=project_id
+            )
+        return project_id
+
+class TeamLeader(BaseAgent):
+    def __init__(self, agent_id: str, role: str, memory: Memory, provider: Optional[LLMProvider] = None, members: List[str] = None):
+        super().__init__(agent_id, role, memory, provider)
+        self.members = members or []
+
+    async def delegate_tasks(self, project_description: str):
+        # Extract project_id from description if it exists (e.g. "proj_123: ...")
+        project_id = "unknown"
+        if ":" in project_description:
+            parts = project_description.split(":", 1)
+            if parts[0].startswith("proj_"):
+                project_id = parts[0].strip()
+                project_description = parts[1].strip()
+
+        if project_id == "unknown":
+            project_id = f"proj_{int(datetime.now().timestamp())}"
+
+        await self.log(f"Team Leader {self.agent_id} managing project {project_id}")
+
+        # Track active projects
+        active_projects = self.memory.get_knowledge("active_projects") or []
+        if project_id not in active_projects:
+            active_projects.append(project_id)
+            self.memory.upsert_knowledge("active_projects", active_projects)
+
         self.memory.publish_event("project/incoming-job", {
             "project_id": project_id,
-            "description": project_description
+            "description": project_description,
+            "leader": self.agent_id
         })
 
         prompt = f"Break down this project into high-level architectural requirements:\n{project_description}"
@@ -138,7 +188,22 @@ class TeamLeader(BaseAgent):
         gm = GateManager(self.memory)
         gm.create_gate(project_id, "design", "Architect", ["Architecture defined", "Peer reviewed"])
 
-        task_id = self.memory.create_task(f"Design architecture for: {project_description}", assigned_to="Architect", project_id=project_id)
+        # Delegate to members
+        if self.members:
+            # Assign first task to an Architect member if available, else generic
+            architect_role = next((m for m in self.members if "Architect" in m), "Architect")
+            task_id = self.memory.create_task(
+                f"{project_id}: Design architecture for: {project_description}",
+                assigned_to=architect_role,
+                project_id=project_id
+            )
+        else:
+            task_id = self.memory.create_task(
+                f"{project_id}: Design architecture for: {project_description}",
+                assigned_to="Architect",
+                project_id=project_id
+            )
+
         self.memory.upsert_knowledge(f"project_{project_id}_arch", architecture)
         return project_id
 
