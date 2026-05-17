@@ -1118,7 +1118,7 @@ class TestGateManagerFailedStatus:
         assert len(completed_events) >= 1
         assert len(resolved_events) >= 1
 
-    def test_evaluate_gate_no_results_does_not_publish_any_gate_event(self, memory):
+    def test_evaluate_gate_no_results_does_nothing(self, memory):
         """evaluate_gate with no results silently returns; no gate events published."""
         from nanoc.core.gate_manager import GateManager
         gm = GateManager(memory)
@@ -1214,7 +1214,8 @@ class TestLLMRecordTelemetry:
 # ===========================================================================
 
 class TestDiscoveryToolCaching:
-    def test_discover_topology_returns_default_with_nodes_and_edges(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_discover_topology_returns_default_with_nodes_and_edges(self, tmp_path):
         """DiscoveryTool.discover_topology() returns dict with 'nodes' and 'edges'."""
         from unittest.mock import patch
         from nanoc.tools.network import DiscoveryTool
@@ -1223,14 +1224,15 @@ class TestDiscoveryToolCaching:
 
         with patch("nanoc.tools.network.Memory", return_value=mem), \
              patch("nanoc.tools.network.settings"):
-            topo = DiscoveryTool.discover_topology()
+            topo = await DiscoveryTool.discover_topology()
 
         assert "nodes" in topo
         assert "edges" in topo
         assert isinstance(topo["nodes"], list)
         assert isinstance(topo["edges"], list)
 
-    def test_discover_topology_stores_result_in_memory(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_discover_topology_stores_result_in_memory(self, tmp_path):
         """First call must store the default topology in memory knowledge store."""
         from unittest.mock import patch
         from nanoc.tools.network import DiscoveryTool
@@ -1239,13 +1241,14 @@ class TestDiscoveryToolCaching:
 
         with patch("nanoc.tools.network.Memory", return_value=mem), \
              patch("nanoc.tools.network.settings"):
-            DiscoveryTool.discover_topology()
+            await DiscoveryTool.discover_topology()
 
         cached = mem.get_knowledge("network_topology")
         assert cached is not None
         assert "nodes" in cached
 
-    def test_discover_topology_returns_cached_topology_on_second_call(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_discover_topology_returns_cached_topology_on_second_call(self, tmp_path):
         """Second call should return stored topology, not regenerate a new one."""
         from unittest.mock import patch
         from nanoc.tools.network import DiscoveryTool
@@ -1260,11 +1263,12 @@ class TestDiscoveryToolCaching:
 
         with patch("nanoc.tools.network.Memory", return_value=mem), \
              patch("nanoc.tools.network.settings"):
-            result = DiscoveryTool.discover_topology()
+            result = await DiscoveryTool.discover_topology()
 
         assert result == custom_topology
 
-    def test_discover_topology_default_contains_core_router(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_discover_topology_default_contains_core_router(self, tmp_path):
         """Default topology includes Core-Rtr-01 node."""
         from unittest.mock import patch
         from nanoc.tools.network import DiscoveryTool
@@ -1273,12 +1277,13 @@ class TestDiscoveryToolCaching:
 
         with patch("nanoc.tools.network.Memory", return_value=mem), \
              patch("nanoc.tools.network.settings"):
-            topo = DiscoveryTool.discover_topology()
+            topo = await DiscoveryTool.discover_topology()
 
         node_ids = [n["id"] for n in topo["nodes"]]
         assert "Core-Rtr-01" in node_ids
 
-    def test_discover_topology_does_not_overwrite_existing_cache(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_discover_topology_does_not_overwrite_existing_cache(self, tmp_path):
         """If memory already has topology, discover_topology must not overwrite it."""
         from unittest.mock import patch
         from nanoc.tools.network import DiscoveryTool
@@ -1290,7 +1295,7 @@ class TestDiscoveryToolCaching:
 
         with patch("nanoc.tools.network.Memory", return_value=mem), \
              patch("nanoc.tools.network.settings"):
-            DiscoveryTool.discover_topology()
+            await DiscoveryTool.discover_topology()
 
         after = mem.get_knowledge("network_topology")
         assert after == original
@@ -1301,7 +1306,8 @@ class TestDiscoveryToolCaching:
 # ===========================================================================
 
 class TestSNMPToolFallback:
-    def test_snmp_get_value_falls_back_when_powershell_fails(self):
+    @pytest.mark.asyncio
+    async def test_snmp_get_value_falls_back_when_powershell_fails(self):
         """When PowerShellTool.run_command returns non-zero, SNMPTool calls snmpget fallback."""
         from unittest.mock import patch, call
         from nanoc.tools.network import SNMPTool
@@ -1310,8 +1316,9 @@ class TestSNMPToolFallback:
         snmp_ok = {"stdout": "1.3.6.1.2.1.1.1.0 = STRING: Linux", "stderr": "", "returncode": 0}
 
         with patch("nanoc.tools.network.PowerShellTool.run_command",
-                   side_effect=[ps_fail, snmp_ok]) as mock_run:
-            result = SNMPTool.get_value("192.168.1.1", "public", "1.3.6.1.2.1.1.1.0")
+                   new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = [ps_fail, snmp_ok]
+            result = await SNMPTool.get_value("192.168.1.1", "public", "1.3.6.1.2.1.1.1.0")
 
         # Two calls: first PowerShell, then snmpget fallback
         assert mock_run.call_count == 2
@@ -1321,7 +1328,8 @@ class TestSNMPToolFallback:
         assert "snmpget" in second_call_cmd
         assert result == snmp_ok
 
-    def test_snmp_get_value_does_not_fallback_on_powershell_success(self):
+    @pytest.mark.asyncio
+    async def test_snmp_get_value_does_not_fallback_on_powershell_success(self):
         """When PowerShellTool succeeds (returncode 0), fallback is NOT called."""
         from unittest.mock import patch
         from nanoc.tools.network import SNMPTool
@@ -1329,14 +1337,16 @@ class TestSNMPToolFallback:
         ps_ok = {"stdout": "value = 42", "stderr": "", "returncode": 0}
 
         with patch("nanoc.tools.network.PowerShellTool.run_command",
-                   return_value=ps_ok) as mock_run:
-            result = SNMPTool.get_value("10.0.0.1", "public", "1.3.6.1.2.1.1.1.0")
+                   new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ps_ok
+            result = await SNMPTool.get_value("10.0.0.1", "public", "1.3.6.1.2.1.1.1.0")
 
         # Only one call (no fallback)
         assert mock_run.call_count == 1
         assert result == ps_ok
 
-    def test_snmp_get_value_returns_fallback_result(self):
+    @pytest.mark.asyncio
+    async def test_snmp_get_value_returns_fallback_result(self):
         """The return value should be the fallback snmpget result, not the failed PS result."""
         from unittest.mock import patch
         from nanoc.tools.network import SNMPTool
@@ -1345,12 +1355,14 @@ class TestSNMPToolFallback:
         snmp_result = {"returncode": 0, "stdout": "OID data", "stderr": ""}
 
         with patch("nanoc.tools.network.PowerShellTool.run_command",
-                   side_effect=[ps_fail, snmp_result]):
-            result = SNMPTool.get_value("1.2.3.4", "private", "1.3.6.1.2.1.1.5.0")
+                   new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = [ps_fail, snmp_result]
+            result = await SNMPTool.get_value("1.2.3.4", "private", "1.3.6.1.2.1.1.5.0")
 
         assert result == snmp_result
 
-    def test_snmp_get_value_passes_correct_ip_community_oid_to_fallback(self):
+    @pytest.mark.asyncio
+    async def test_snmp_get_value_passes_correct_ip_community_oid_to_fallback(self):
         """The fallback snmpget command includes the IP, community, and OID."""
         from unittest.mock import patch
         from nanoc.tools.network import SNMPTool
@@ -1359,15 +1371,17 @@ class TestSNMPToolFallback:
         snmp_result = {"returncode": 0, "stdout": "", "stderr": ""}
 
         with patch("nanoc.tools.network.PowerShellTool.run_command",
-                   side_effect=[ps_fail, snmp_result]) as mock_run:
-            SNMPTool.get_value("172.16.0.1", "community123", "1.3.6.1.2.1.2.1.0")
+                   new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = [ps_fail, snmp_result]
+            await SNMPTool.get_value("172.16.0.1", "community123", "1.3.6.1.2.1.2.1.0")
 
         fallback_cmd = mock_run.call_args_list[1][0][0]
         assert "172.16.0.1" in fallback_cmd
         assert "community123" in fallback_cmd
         assert "1.3.6.1.2.1.2.1.0" in fallback_cmd
 
-    def test_snmp_get_value_returns_ps_result_when_returncode_missing(self):
+    @pytest.mark.asyncio
+    async def test_snmp_get_value_returns_ps_result_when_returncode_missing(self):
         """If PowerShellTool result lacks 'returncode' key (e.g. error dict), fallback is triggered."""
         from unittest.mock import patch
         from nanoc.tools.network import SNMPTool
@@ -1376,8 +1390,9 @@ class TestSNMPToolFallback:
         snmp_result = {"returncode": 0, "stdout": "ok", "stderr": ""}
 
         with patch("nanoc.tools.network.PowerShellTool.run_command",
-                   side_effect=[ps_error, snmp_result]) as mock_run:
-            result = SNMPTool.get_value("10.10.10.10", "pub", "1.3.6.1.2.1.1.1.0")
+                   new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = [ps_error, snmp_result]
+            result = await SNMPTool.get_value("10.10.10.10", "pub", "1.3.6.1.2.1.1.1.0")
 
         # returncode is None (missing) → None != 0 → fallback triggered
         assert mock_run.call_count == 2

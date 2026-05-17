@@ -24,11 +24,14 @@ class Debater:
 
 class Orchestrator:
     def __init__(self, memory: Memory, leader: BaseAgent):
+        from nanoc.core.config import settings
         self.memory = memory
         self.leader = leader
         self.agents = {}
         self.task_queue = asyncio.Queue()
-        self.num_workers = 5
+        self.initial_workers = settings.INITIAL_WORKERS
+        self.max_workers = settings.MAX_WORKERS
+        self.current_workers = []
 
     def add_agent(self, agent: BaseAgent):
         self.agents[agent.role] = agent
@@ -81,13 +84,28 @@ class Orchestrator:
                     conn.commit()
             except Exception as e:
                 await agent.log(f"Error processing task {task['id']}: {e}")
+                retry_count = task.get('retry_count', 0) + 1
+                max_retries = task.get('max_retries', 3)
+
+                status = 'failed'
+                if retry_count <= max_retries:
+                    status = 'pending'
+
                 with sqlite3.connect(self.memory.db_path) as conn:
                     cursor = conn.cursor()
                     cursor.execute(
-                        "UPDATE tasks SET status = 'failed', result = ?, updated_at = ? WHERE id = ?",
-                        (str(e), datetime.now(), task['id'])
+                        "UPDATE tasks SET status = ?, result = ?, retry_count = ?, updated_at = ? WHERE id = ?",
+                        (status, str(e), retry_count, datetime.now(), task['id'])
                     )
                     conn.commit()
+
+                if status == 'failed':
+                    self.memory.publish_event("task/failed", {
+                        "task_id": task['id'],
+                        "project_id": task.get('project_id'),
+                        "error": str(e),
+                        "description": task['description']
+                    })
 
     async def run_loop(self):
         from nanoc.core.event_bus import EventBus
@@ -120,19 +138,34 @@ class Orchestrator:
             elif gate_type == "code":
                 await analyst.log(f"Project {project_id} completed successfully.")
 
+        async def handle_scale_up(payload):
+            if len(self.current_workers) < self.max_workers:
+                new_id = len(self.current_workers)
+                task = asyncio.create_task(self.worker(new_id))
+                self.current_workers.append(task)
+                await self.leader.log(f"Scaled up: Worker {new_id} added. Total: {len(self.current_workers)}")
+
+        async def handle_scale_down(payload):
+            if len(self.current_workers) > self.initial_workers:
+                task = self.current_workers.pop()
+                task.cancel()
+                await self.leader.log(f"Scaled down: One worker removed. Total: {len(self.current_workers)}")
+
         bus.subscribe("gate/result-added", handle_gate_result)
         bus.subscribe("gate/resolved", handle_gate_resolved)
+        bus.subscribe("system/scale-up", handle_scale_up)
+        bus.subscribe("system/scale-down", handle_scale_down)
         asyncio.create_task(bus.start_polling())
 
-        # Start worker pool
-        workers = [asyncio.create_task(self.worker(i)) for i in range(self.num_workers)]
+        # Start initial worker pool
+        self.current_workers = [asyncio.create_task(self.worker(i)) for i in range(self.initial_workers)]
 
         while True:
             with sqlite3.connect(self.memory.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 cursor.execute("BEGIN IMMEDIATE")
-                cursor.execute("SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at ASC")
+                cursor.execute("SELECT * FROM tasks WHERE status = 'pending' ORDER BY priority DESC, created_at ASC")
                 tasks = [dict(row) for row in cursor.fetchall()]
                 for task in tasks:
                     cursor.execute("UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?", (datetime.now(), task['id']))
