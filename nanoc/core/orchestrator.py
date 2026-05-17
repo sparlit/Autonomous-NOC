@@ -1,7 +1,8 @@
 import asyncio
 import json
+import sqlite3
 from datetime import datetime
-from typing import List
+from typing import List, Dict, Any
 from nanoc.agents.base import BaseAgent
 from nanoc.memory.memory import Memory
 
@@ -22,16 +23,73 @@ class Debater:
         return decision
 
 class Orchestrator:
-    def __init__(self, memory, leader):
+    def __init__(self, memory: Memory, leader: BaseAgent):
         self.memory = memory
         self.leader = leader
         self.agents = {}
+        self.task_queue = asyncio.Queue()
+        self.num_workers = 5
 
     def add_agent(self, agent: BaseAgent):
         self.agents[agent.role] = agent
 
+    async def worker(self, worker_id: int):
+        print(f"[Orchestrator] Worker {worker_id} started.")
+        while True:
+            task = await self.task_queue.get()
+            try:
+                await self.process_task(task)
+            except Exception as e:
+                print(f"[Orchestrator] Worker {worker_id} failed task {task.get('id')}: {e}")
+            finally:
+                self.task_queue.task_done()
+
+    async def process_task(self, task: Dict[str, Any]):
+        role = task['assigned_to']
+        if role in self.agents:
+            agent = self.agents[role]
+            await agent.log(f"Processing task {task['id']}: {task['description']}")
+
+            try:
+                if role == "Architect":
+                    desc = task['description']
+                    result = await agent.design_solution(desc)
+                elif role == "Planner":
+                    desc = task['description']
+                    result = await agent.create_todo_list(desc)
+                elif role == "Coder":
+                    desc = task['description']
+                    result = await agent.write_code(desc)
+                elif role == "Reviewer":
+                    desc = task['description']
+                    result = await agent.review_work(desc)
+                    if "APPROVED" not in result:
+                        self.memory.create_task(
+                            f"Fix flaws in previous work based on review: {result}\nOriginal Task: {task['description']}",
+                            assigned_to="Coder",
+                            project_id=task.get('project_id')
+                        )
+                else:
+                    result = await agent.think(f"Execute this task: {task['description']}")
+
+                with sqlite3.connect(self.memory.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "UPDATE tasks SET status = 'completed', result = ?, updated_at = ? WHERE id = ?",
+                        (result, datetime.now(), task['id'])
+                    )
+                    conn.commit()
+            except Exception as e:
+                await agent.log(f"Error processing task {task['id']}: {e}")
+                with sqlite3.connect(self.memory.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "UPDATE tasks SET status = 'failed', result = ?, updated_at = ? WHERE id = ?",
+                        (str(e), datetime.now(), task['id'])
+                    )
+                    conn.commit()
+
     async def run_loop(self):
-        # Start event bus listener
         from nanoc.core.event_bus import EventBus
         from nanoc.core.gate_manager import GateManager
         from nanoc.agents.analyst import Analyst
@@ -41,9 +99,7 @@ class Orchestrator:
         analyst = Analyst("SystemAnalyst", self.memory)
 
         async def handle_gate_result(payload):
-            # payload: { "type": "...", "status": "pass/fail", "gate_id": "..." }
             project_id = payload.get("project_id")
-            print(f"[Orchestrator] Handling gate result: {payload.get('status')} for project {project_id}")
             if payload.get("status") == "fail":
                 await analyst.analyze_failure(payload)
             else:
@@ -54,16 +110,13 @@ class Orchestrator:
         async def handle_gate_resolved(payload):
             project_id = payload.get("project_id")
             gate_type = payload.get("type")
-            print(f"[Orchestrator] Gate {gate_type} resolved for project {project_id}")
-
             from nanoc.agents.documentation import DocumentationAgent
             doc_agent = DocumentationAgent("SystemDoc", "Documentation", self.memory)
             await doc_agent.update_docs(project_id, f"Gate {gate_type} resolved at {datetime.now()}")
 
             if gate_type == "design":
-                # Create planning task
                 arch = self.memory.get_knowledge(f"project_{project_id}_arch")
-                self.memory.create_task(f"{project_id}: Create task list for design: {arch[:50]}", assigned_to="Planner")
+                self.memory.create_task(f"{project_id}: Create task list for design: {arch[:50]}", assigned_to="Planner", project_id=project_id)
             elif gate_type == "code":
                 await analyst.log(f"Project {project_id} completed successfully.")
 
@@ -71,64 +124,13 @@ class Orchestrator:
         bus.subscribe("gate/resolved", handle_gate_resolved)
         asyncio.create_task(bus.start_polling())
 
-        semaphore = asyncio.Semaphore(5)  # Limit concurrent tasks
-
-        async def process_task(task):
-            async with semaphore:
-                role = task['assigned_to']
-                if role in self.agents:
-                    agent = self.agents[role]
-                    await agent.log(f"Processing task {task['id']} in parallel: {task['description']}")
-
-                    try:
-                        # Call specific methods based on role
-                        if role == "Architect":
-                            desc = task['description']
-                            if task['project_id'] and task['project_id'] not in desc:
-                                desc = f"{task['project_id']}: {desc}"
-                            result = await agent.design_solution(desc)
-                        elif role == "Planner":
-                            desc = task['description']
-                            if task['project_id'] and task['project_id'] not in desc:
-                                desc = f"{task['project_id']}: {desc}"
-                            result = await agent.create_todo_list(desc)
-                        elif role == "Coder":
-                            desc = task['description']
-                            if task['project_id'] and task['project_id'] not in desc:
-                                desc = f"{task['project_id']}: {desc}"
-                            result = await agent.write_code(desc)
-                        elif role == "Reviewer":
-                            desc = task['description']
-                            if task['project_id'] and task['project_id'] not in desc:
-                                desc = f"{task['project_id']}: {desc}"
-                            result = await agent.review_work(desc)
-                            if "APPROVED" not in result:
-                                self.memory.create_task(f"Fix flaws in previous work based on review: {result}\nOriginal Task: {task['description']}", assigned_to="Coder")
-                        else:
-                            result = await agent.think(f"Execute this task: {task['description']}")
-
-                        import sqlite3
-                        with sqlite3.connect(self.memory.db_path) as conn:
-                            cursor = conn.cursor()
-                            cursor.execute("UPDATE tasks SET status = 'completed', result = ?, updated_at = ? WHERE id = ?",
-                                           (result, datetime.now(), task['id']))
-                            conn.commit()
-                    except Exception as e:
-                        await agent.log(f"Error processing task {task['id']}: {e}")
-                        import sqlite3
-                        with sqlite3.connect(self.memory.db_path) as conn:
-                            cursor = conn.cursor()
-                            cursor.execute("UPDATE tasks SET status = 'failed', result = ?, updated_at = ? WHERE id = ?",
-                                           (str(e), datetime.now(), task['id']))
-                            conn.commit()
+        # Start worker pool
+        workers = [asyncio.create_task(self.worker(i)) for i in range(self.num_workers)]
 
         while True:
-            # Check for all pending tasks in memory
-            import sqlite3
             with sqlite3.connect(self.memory.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
-                # Use a transaction to mark tasks as 'processing' to avoid duplicate work
                 cursor.execute("BEGIN IMMEDIATE")
                 cursor.execute("SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at ASC")
                 tasks = [dict(row) for row in cursor.fetchall()]
@@ -136,8 +138,7 @@ class Orchestrator:
                     cursor.execute("UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?", (datetime.now(), task['id']))
                 conn.commit()
 
-            if tasks:
-                # Process all found tasks concurrently
-                await asyncio.gather(*(process_task(task) for task in tasks))
+            for task in tasks:
+                await self.task_queue.put(task)
 
             await asyncio.sleep(5)
