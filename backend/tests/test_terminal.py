@@ -366,9 +366,9 @@ class TestOnPtyReadCallback:
              patch("asyncio.create_task", side_effect=fake_create_task):
             await session.run()
 
-        # The callback was registered; manually fire it
-        if captured_callback:
-            captured_callback()
+            # The callback was registered; manually fire it while patches are active
+            if captured_callback:
+                captured_callback()
         # At least one coroutine for send_bytes should have been scheduled
         assert len(created_tasks) >= 1
 

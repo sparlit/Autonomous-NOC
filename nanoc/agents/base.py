@@ -111,6 +111,10 @@ class BaseAgent:
     def register_tool(self, name: str, func: callable):
         self.tools[name] = func
 
+    async def handle_task(self, task: Dict[str, Any]) -> str:
+        """Default task handler that uses thinking process."""
+        return await self.think(f"Execute this task: {task['description']}")
+
 class TeamLeader(BaseAgent):
     async def delegate_tasks(self, project_description: str):
         project_id = f"proj_{int(datetime.now().timestamp())}"
@@ -139,6 +143,12 @@ class TeamLeader(BaseAgent):
         return project_id
 
 class Architect(BaseAgent):
+    async def handle_task(self, task: Dict[str, Any]) -> str:
+        desc = task['description']
+        if task['project_id'] and task['project_id'] not in desc:
+            desc = f"{task['project_id']}: {desc}"
+        return await self.design_solution(desc)
+
     async def design_solution(self, requirements: str):
         await self.log("Designing system architecture with internal debate...")
 
@@ -176,6 +186,12 @@ class Architect(BaseAgent):
         return design
 
 class Planner(BaseAgent):
+    async def handle_task(self, task: Dict[str, Any]) -> str:
+        desc = task['description']
+        if task['project_id'] and task['project_id'] not in desc:
+            desc = f"{task['project_id']}: {desc}"
+        return await self.create_todo_list(desc)
+
     async def create_todo_list(self, architecture: str):
         await self.log("Generating granular task list...")
         project_id = architecture.split(":")[0] if ":" in architecture else "unknown"
@@ -195,6 +211,12 @@ class Planner(BaseAgent):
         return todo_list
 
 class Coder(BaseAgent):
+    async def handle_task(self, task: Dict[str, Any]) -> str:
+        desc = task['description']
+        if task['project_id'] and task['project_id'] not in desc:
+            desc = f"{task['project_id']}: {desc}"
+        return await self.write_code(desc)
+
     async def write_code(self, task: str):
         await self.log(f"Coding task: {task}")
         project_id = task.split(":")[0] if ":" in task else "unknown"
@@ -216,6 +238,12 @@ class Coder(BaseAgent):
         return code
 
 class Reviewer(BaseAgent):
+    async def handle_task(self, task: Dict[str, Any]) -> str:
+        desc = task['description']
+        if task['project_id'] and task['project_id'] not in desc:
+            desc = f"{task['project_id']}: {desc}"
+        return await self.review_work(desc)
+
     async def review_work(self, work: str):
         await self.log("Reviewing work for flaws...")
         project_id = work.split(":")[0] if ":" in work else "unknown"

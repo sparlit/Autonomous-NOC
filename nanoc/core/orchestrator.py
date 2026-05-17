@@ -71,53 +71,69 @@ class Orchestrator:
         bus.subscribe("gate/resolved", handle_gate_resolved)
         asyncio.create_task(bus.start_polling())
 
-        while True:
-            # Check for pending tasks in memory
-            import sqlite3
-            with sqlite3.connect(self.memory.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1")
-                task = cursor.fetchone()
+        semaphore = asyncio.Semaphore(5)  # Limit concurrent tasks
 
-            if task:
+        async def process_task(task):
+            async with semaphore:
                 role = task['assigned_to']
                 if role in self.agents:
                     agent = self.agents[role]
-                    await agent.log(f"Processing task {task['id']}: {task['description']}")
+                    await agent.log(f"Processing task {task['id']} in parallel: {task['description']}")
 
-                    # Call specific methods based on role
-                    if role == "Architect":
-                        # Ensure project_id is passed if available
-                        desc = task['description']
-                        if task['project_id'] and task['project_id'] not in desc:
-                            desc = f"{task['project_id']}: {desc}"
-                        result = await agent.design_solution(desc)
-                    elif role == "Planner":
-                        desc = task['description']
-                        if task['project_id'] and task['project_id'] not in desc:
-                            desc = f"{task['project_id']}: {desc}"
-                        result = await agent.create_todo_list(desc)
-                    elif role == "Coder":
-                        desc = task['description']
-                        if task['project_id'] and task['project_id'] not in desc:
-                            desc = f"{task['project_id']}: {desc}"
-                        result = await agent.write_code(desc)
-                    elif role == "Reviewer":
-                        desc = task['description']
-                        if task['project_id'] and task['project_id'] not in desc:
-                            desc = f"{task['project_id']}: {desc}"
-                        result = await agent.review_work(desc)
-                        if "APPROVED" not in result:
-                            # Re-assign back to Coder
-                            self.memory.create_task(f"Fix flaws in previous work based on review: {result}\nOriginal Task: {task['description']}", assigned_to="Coder")
-                    else:
-                        result = await agent.think(f"Execute this task: {task['description']}")
+                    try:
+                        # Use the unified agent interface
+                        result = await agent.handle_task(task)
 
-                    with sqlite3.connect(self.memory.db_path) as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("UPDATE tasks SET status = 'completed', result = ?, updated_at = ? WHERE id = ?",
-                                       (result, datetime.now(), task['id']))
-                        conn.commit()
+                        # Special case for Reviewer to re-assign if failed
+                        if role == "Reviewer" and "APPROVED" not in result:
+                            self.memory.create_task(
+                                f"Fix flaws in previous work based on review: {result}\nOriginal Task: {task['description']}",
+                                assigned_to="Coder",
+                                project_id=task.get('project_id')
+                            )
+
+                        import sqlite3
+                        with sqlite3.connect(self.memory.db_path) as conn:
+                            cursor = conn.cursor()
+                            cursor.execute("UPDATE tasks SET status = 'completed', result = ?, updated_at = ? WHERE id = ?",
+                                           (result, datetime.now(), task['id']))
+                            conn.commit()
+                    except Exception as e:
+                        await agent.log(f"Error processing task {task['id']}: {e}")
+
+                        # Retry logic
+                        retry_count = task.get('retry_count', 0) + 1
+                        max_retries = task.get('max_retries', 3)
+
+                        import sqlite3
+                        with sqlite3.connect(self.memory.db_path) as conn:
+                            cursor = conn.cursor()
+                            if retry_count <= max_retries:
+                                # Re-queue for retry
+                                cursor.execute("UPDATE tasks SET status = 'pending', retry_count = ?, result = ?, updated_at = ? WHERE id = ?",
+                                               (retry_count, str(e), datetime.now(), task['id']))
+                            else:
+                                # Final failure
+                                cursor.execute("UPDATE tasks SET status = 'failed', result = ?, updated_at = ? WHERE id = ?",
+                                               (str(e), datetime.now(), task['id']))
+                            conn.commit()
+
+        import sqlite3
+        while True:
+            # Check for all pending tasks in memory
+            with sqlite3.connect(self.memory.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                # Use a transaction to mark tasks as 'processing' to avoid duplicate work
+                cursor.execute("BEGIN IMMEDIATE")
+                cursor.execute("SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at ASC")
+                tasks = [dict(row) for row in cursor.fetchall()]
+                for task in tasks:
+                    cursor.execute("UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?", (datetime.now(), task['id']))
+                conn.commit()
+
+            if tasks:
+                # Process all found tasks concurrently
+                await asyncio.gather(*(process_task(task) for task in tasks))
 
             await asyncio.sleep(5)

@@ -30,6 +30,8 @@ class Memory:
                     assigned_to TEXT,
                     status TEXT,
                     result TEXT,
+                    retry_count INTEGER DEFAULT 0,
+                    max_retries INTEGER DEFAULT 3,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
@@ -165,12 +167,12 @@ class Memory:
                 return json.loads(row[0])
             return None
 
-    def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None) -> int:
+    def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None, max_retries: int = 3) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO tasks (description, assigned_to, status, parent_id, project_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (description, assigned_to, 'pending', parent_id, project_id, datetime.now(), datetime.now()))
+                INSERT INTO tasks (description, assigned_to, status, parent_id, project_id, max_retries, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (description, assigned_to, 'pending', parent_id, project_id, max_retries, datetime.now(), datetime.now()))
             conn.commit()
             return cursor.lastrowid
