@@ -6,16 +6,22 @@ import signal
 import struct
 import fcntl
 import termios
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from nanoc.core.config import settings
 
 router = APIRouter()
+
+async def get_token_auth(websocket: WebSocket):
+    # Simple token check from query params or headers
+    token = websocket.query_params.get("token")
+    if token != settings.TERMINAL_ACCESS_TOKEN:
+        await websocket.close(code=1008) # Policy Violation
+        return None
+    return token
 
 class TerminalSession:
     """
     Manages a pseudo-terminal (PTY) session connected to a WebSocket.
-
-    WARNING: This provides shell access. In a production environment,
-    this MUST be protected by strong authentication and authorization.
     """
     def __init__(self, websocket: WebSocket):
         self.websocket = websocket
@@ -86,9 +92,13 @@ class TerminalSession:
 @router.websocket("/ws")
 async def terminal_websocket(websocket: WebSocket):
     """
-    WebSocket endpoint for terminal access.
+    WebSocket endpoint for terminal access with token authentication.
     """
     await websocket.accept()
+    token = await get_token_auth(websocket)
+    if not token:
+        return
+
     session = TerminalSession(websocket)
     try:
         await session.start()

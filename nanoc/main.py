@@ -74,6 +74,9 @@ async def startup_event():
     import threading
     from nanoc.core.orchestrator import Orchestrator
     from nanoc.agents.base import TeamLeader, Architect, Planner, Coder, Reviewer
+    from nanoc.agents.governor import Governor
+    from nanoc.agents.security import SecurityAgent
+    from nanoc.agents.healer import AutoHealer
 
     # Initialize Teams with 3 members + 1 leader each as requested
     # Team 1: NetOps
@@ -90,6 +93,8 @@ async def startup_event():
     planner = Planner("Planner", "Planner", memory)
     coder = Coder("Coder", "Coder", memory)
     reviewer = Reviewer("Reviewer", "Reviewer", memory)
+    security_agent = SecurityAgent("SecurityAgent", memory)
+    healer = AutoHealer("AutoHealer", memory)
 
     orchestrator = Orchestrator(memory, leader)
     # Register all hierarchical agents
@@ -108,6 +113,8 @@ async def startup_event():
     orchestrator.add_agent(planner)
     orchestrator.add_agent(coder)
     orchestrator.add_agent(reviewer)
+    orchestrator.add_agent(security_agent)
+    orchestrator.add_agent(healer)
 
     # Background threads
     threading.Thread(target=inbox_watcher, daemon=True).start()
@@ -131,7 +138,17 @@ async def startup_event():
         import asyncio
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(orchestrator.run_loop())
+
+        from nanoc.core.event_bus import EventBus
+        bus = EventBus(memory)
+        bus.subscribe("task/failed", healer.handle_failure)
+
+        # We need to run the polling in the same loop as the orchestrator
+        async def combined_loop():
+            asyncio.create_task(bus.start_polling())
+            await orchestrator.run_loop()
+
+        loop.run_until_complete(combined_loop())
 
     threading.Thread(target=run_orchestrator, daemon=True).start()
 
