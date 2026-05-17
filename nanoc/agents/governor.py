@@ -1,7 +1,9 @@
 import asyncio
+import sqlite3
 from typing import Dict, Any, List
 from nanoc.agents.base import BaseAgent
 from nanoc.memory.memory import Memory
+from nanoc.tools.network import SystemMonitor
 
 class Governor(BaseAgent):
     def __init__(self, agent_id: str, memory: Memory, config: Dict[str, Any]):
@@ -10,16 +12,19 @@ class Governor(BaseAgent):
         self.thresholds = config.get("thresholds", {
             "error_rate": 0.2,
             "cost_limit": 10.0,
-            "latency_ms": 30000
+            "latency_ms": 30000,
+            "cpu_limit": 90.0,
+            "mem_limit": 90.0
         })
 
     async def decide_action(self, metrics: Dict[str, Any]) -> str:
         """
-        Decision logic based on observable KPIs.
+        Decision logic based on observable KPIs and resource usage.
         Returns: 'CONTINUE', 'SCALE_UP', 'SCALE_DOWN', 'ABORT_HUMAN_REVIEW'
         """
         error_rate = metrics.get("error_rate", 0)
         total_cost = metrics.get("total_cost", 0)
+        system = metrics.get("system", {})
 
         if error_rate > self.thresholds["error_rate"]:
             await self.log(f"Critical error rate detected: {error_rate}")
@@ -28,6 +33,13 @@ class Governor(BaseAgent):
         if total_cost > self.thresholds["cost_limit"]:
             await self.log(f"Cost limit exceeded: {total_cost}")
             return "ABORT_HUMAN_REVIEW"
+
+        # Resource usage checks
+        cpu = system.get("cpu_percent", 0)
+        mem = system.get("memory_percent", 0)
+        if cpu > self.thresholds["cpu_limit"] or mem > self.thresholds["mem_limit"]:
+            await self.log(f"High resource usage: CPU {cpu}%, MEM {mem}%")
+            return "SCALE_DOWN"
 
         # Example scaling logic
         backlog_size = metrics.get("backlog_size", 0)
@@ -71,7 +83,8 @@ class Governor(BaseAgent):
             "error_rate": 0.0,
             "total_cost": 0.0,
             "backlog_size": 0,
-            "latency_ms": 0
+            "latency_ms": 0,
+            "system": SystemMonitor.get_resource_usage()
         }
 
         with self.memory.get_connection() as conn:

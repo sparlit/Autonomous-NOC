@@ -1,6 +1,7 @@
 import subprocess
 import os
 import shutil
+import ast
 from nanoc.core.config import settings
 
 class SelfEvolutionManager:
@@ -15,12 +16,41 @@ class SelfEvolutionManager:
         # Copy nanoc directory to staging
         shutil.copytree("nanoc", os.path.join(self.staging, "nanoc"))
 
-    def apply_change_to_staging(self, filepath: str, content: str):
-        """Apply a proposed code change to a file in staging."""
+    def validate_change(self, content: str) -> bool:
+        """Validate the proposed code for security risks."""
+        try:
+            tree = ast.parse(content)
+            for node in ast.walk(tree):
+                # Block eval and exec
+                if isinstance(node, ast.Call):
+                    if isinstance(node.func, ast.Name):
+                        if node.func.id in ["eval", "exec", "__import__"]:
+                            print(f"Security violation: Use of forbidden function {node.func.id}")
+                            return False
+                    # Block os.system and os.popen
+                    elif isinstance(node.func, ast.Attribute):
+                        if isinstance(node.func.value, ast.Name) and node.func.value.id == "os":
+                            if node.func.attr in ["system", "popen"]:
+                                print(f"Security violation: Use of forbidden attribute os.{node.func.attr}")
+                                return False
+            return True
+        except SyntaxError:
+            print("Syntax error in proposed code change.")
+            return False
+        except Exception as e:
+            print(f"Validation error: {e}")
+            return False
+
+    def apply_change_to_staging(self, filepath: str, content: str) -> bool:
+        """Apply a proposed code change to a file in staging after validation."""
+        if not self.validate_change(content):
+            return False
+
         target_path = os.path.join(self.staging, filepath)
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         with open(target_path, "w") as f:
             f.write(content)
+        return True
 
     def run_tests_in_staging(self) -> bool:
         """Run pytest in the staging directory."""

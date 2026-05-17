@@ -2,6 +2,20 @@ import asyncio
 import json
 import os
 import platform
+import psutil
+
+class SystemMonitor:
+    @staticmethod
+    def get_resource_usage():
+        """
+        Gather real-time system resource usage metrics.
+        Returns a dict with cpu_percent, memory_percent, and disk_usage_percent.
+        """
+        return {
+            "cpu_percent": psutil.cpu_percent(interval=1),
+            "memory_percent": psutil.virtual_memory().percent,
+            "disk_usage_percent": psutil.disk_usage('/').percent
+        }
 
 class ShellTool:
     @staticmethod

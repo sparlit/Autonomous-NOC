@@ -186,3 +186,12 @@ class Memory:
             ''', (description, assigned_to, 'pending', parent_id, project_id, max_retries, priority, datetime.now(), datetime.now()))
             conn.commit()
             return cursor.lastrowid
+
+    def cleanup_old_tasks(self, days: int = 7):
+        """
+        Delete task records older than the specified number of days to prevent database bloat.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM tasks WHERE created_at < datetime('now', ?)", (f"-{days} days",))
+            conn.commit()
