@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import WebSocket, WebSocketDisconnect
-from app.api.endpoints import monitoring, alerts, websockets, data
+from app.api.endpoints import monitoring, alerts, websockets, data, terminal
 from app.core.config import settings
 import asyncio
 from nanoc.memory.memory import Memory
@@ -46,7 +46,7 @@ app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -54,6 +54,7 @@ app.add_middleware(
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["monitoring"])
 app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])
 app.include_router(data.router, prefix="/api/data", tags=["data"])
+app.include_router(terminal.router, prefix="/api/terminal", tags=["terminal"])
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

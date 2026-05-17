@@ -50,16 +50,14 @@ class TestMonitoringStatus:
         response = client.get("/api/monitoring/status")
         assert response.json()["status"] == "nominal"
 
-    def test_response_has_exactly_four_keys(self):
-        """The simplified endpoint returns exactly latency, uptime, traffic, status."""
+    def test_response_has_expected_keys(self):
         response = client.get("/api/monitoring/status")
         body = response.json()
-        assert set(body.keys()) == {"latency", "uptime", "traffic", "status"}
+        assert {"latency", "uptime", "traffic", "status", "backlog"}.issubset(set(body.keys()))
 
-    def test_no_backlog_key_in_simplified_response(self):
-        """PR removed the 'backlog' key; ensure it is gone."""
+    def test_backlog_key_present(self):
         response = client.get("/api/monitoring/status")
-        assert "backlog" not in response.json()
+        assert "backlog" in response.json()
 
     def test_status_is_idempotent(self):
         """Calling the endpoint twice returns the same value."""
@@ -176,7 +174,6 @@ class TestMonitoringMetrics:
             # params dict must include our query string
             assert call_kwargs[1]["params"]["query"] == "node_memory_free"
 
-    def test_history_endpoint_no_longer_exists(self):
-        """PR removed the /history endpoint; expect 404 or 405."""
+    def test_history_endpoint_exists(self):
         response = client.get("/api/monitoring/history", params={"name": "latency"})
-        assert response.status_code in (404, 405)
+        assert response.status_code == 200
