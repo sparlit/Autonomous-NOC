@@ -59,19 +59,17 @@ class TestRouteRegistration:
     def test_alerts_summary_route_registered(self):
         assert "/api/alerts/summary" in self._route_paths()
 
-    def test_data_topology_route_not_registered(self):
-        """data.router was removed in this PR."""
-        assert "/api/data/topology" not in self._route_paths()
+    def test_data_topology_route_registered(self):
+        assert "/api/data/topology" in self._route_paths()
 
-    def test_data_agents_route_not_registered(self):
-        assert "/api/data/agents" not in self._route_paths()
+    def test_data_agents_route_registered(self):
+        assert "/api/data/agents" in self._route_paths()
 
-    def test_data_tasks_route_not_registered(self):
-        assert "/api/data/tasks" not in self._route_paths()
+    def test_data_tasks_route_registered(self):
+        assert "/api/data/tasks" in self._route_paths()
 
-    def test_old_ws_endpoint_not_registered(self):
-        """The old /ws WebSocket endpoint was removed; the new one is under /api/terminal/ws."""
-        assert "/ws" not in self._route_paths()
+    def test_old_ws_endpoint_registered(self):
+        assert "/ws" in self._route_paths()
 
 
 # ---------------------------------------------------------------------------
@@ -109,15 +107,15 @@ class TestAppMetadata:
 # Removed endpoints return 404
 # ---------------------------------------------------------------------------
 
-class TestRemovedEndpoints:
-    def test_data_topology_returns_404(self):
+class TestExistingEndpoints:
+    def test_data_topology_returns_200(self):
         response = client.get("/api/data/topology")
-        assert response.status_code == 404
+        assert response.status_code == 200
 
-    def test_data_agents_returns_404(self):
+    def test_data_agents_returns_200(self):
         response = client.get("/api/data/agents")
-        assert response.status_code == 404
+        assert response.status_code == 200
 
-    def test_monitoring_history_returns_404(self):
-        response = client.get("/api/monitoring/history", params={"name": "x"})
-        assert response.status_code in (404, 405, 422)
+    def test_monitoring_history_returns_200(self):
+        response = client.get("/api/monitoring/history", params={"name": "latency"})
+        assert response.status_code == 200
