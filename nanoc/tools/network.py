@@ -1,59 +1,64 @@
-import subprocess
+import asyncio
 import json
 import os
 import platform
 
 class ShellTool:
     @staticmethod
-    def run_command(args: list):
-        """Run a shell command and return output."""
+    async def run_command(args: list):
+        """Run a shell command asynchronously and return output."""
         try:
-            result = subprocess.run(args, capture_output=True, text=True)
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
             return {
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "returncode": result.returncode
+                "stdout": stdout.decode(),
+                "stderr": stderr.decode(),
+                "returncode": proc.returncode
             }
         except Exception as e:
             return {"error": str(e)}
 
 class SNMPTool:
     @staticmethod
-    def get_value(ip: str, community: str, oid: str):
+    async def get_value(ip: str, community: str, oid: str):
         """
         Execute an SNMP GET request using net-snmp snmpget (FOSS).
         """
         cmd = ["snmpget", "-v", "2c", "-c", community, ip, oid]
-        return ShellTool.run_command(cmd)
+        return await ShellTool.run_command(cmd)
 
 class NetworkScanner:
     @staticmethod
-    def scan_local_network(ip_range: str):
+    async def scan_local_network(ip_range: str):
         """
         Scan a local IP range using nmap (FOSS).
         """
         cmd = ["nmap", "-sn", ip_range]
-        return ShellTool.run_command(cmd)
+        return await ShellTool.run_command(cmd)
 
 class DiagnosticTools:
     @staticmethod
-    def ping(target: str, count: int = 4):
+    async def ping(target: str, count: int = 4):
         """
         Execute a ping to a target host using FOSS ping.
         """
         # Determine flag based on platform
         flag = "-n" if platform.system() == "Windows" else "-c"
         cmd = ["ping", flag, str(count), target]
-        return ShellTool.run_command(cmd)
+        return await ShellTool.run_command(cmd)
 
     @staticmethod
-    def traceroute(target: str):
+    async def traceroute(target: str):
         """
         Trace the network route using traceroute (FOSS).
         """
         cmd_name = "tracert" if platform.system() == "Windows" else "traceroute"
         cmd = [cmd_name, target]
-        return ShellTool.run_command(cmd)
+        return await ShellTool.run_command(cmd)
 
 class DiscoveryTool:
     @staticmethod

@@ -1,41 +1,13 @@
 from fastapi import APIRouter, HTTPException
 import httpx
 from app.core.config import settings
+import json
 
 router = APIRouter()
 
-@router.get("/summary")
-async def get_alerts_summary():
+async def fetch_all_alerts_logic():
     """
-    Returns a summary of active alerts from Keep and internal state.
-    """
-    all_alerts_resp = await get_all_alerts()
-    alerts = all_alerts_resp.get("alerts", [])
-
-    urgent = len([a for r in alerts if (a.get("severity") == "critical" or a.get("severity") == "urgent")])
-    warning = len([a for r in alerts if a.get("severity") == "warning"])
-
-    recent = []
-    for a in alerts[:5]:
-        recent.append({
-            "time": a.get("timestamp", "").split("T")[-1][:8] if "T" in a.get("timestamp", "") else "unknown",
-            "event": a.get("title", "Unknown Event"),
-            "status": "Active"
-        })
-
-    return {
-        "active_alerts": len(alerts),
-        "urgent": urgent,
-        "warning": warning,
-        "recent_events": recent or [
-            {"time": "00:00:00", "event": "No active alerts", "status": "Nominal"}
-        ]
-    }
-
-@router.get("/all")
-async def get_all_alerts():
-    """
-    Fetch all alerts from Keep or local metrics if Keep is unreachable.
+    Internal logic to fetch all alerts from Keep or local metrics.
     """
     async with httpx.AsyncClient() as client:
         try:
@@ -48,13 +20,11 @@ async def get_all_alerts():
             # Fallback: Check local events for gate failures which are like alerts
             from nanoc.memory.memory import Memory
             from nanoc.core.config import settings as nanoc_settings
-            # Note: backend might need its own way to access nanoc DB
             mem = Memory(nanoc_settings.DB_PATH)
             failures = mem.get_events(topic="gate/failed", since_id=0)
 
             alerts = []
             for f in failures:
-                import json
                 payload = json.loads(f['payload'])
                 alerts.append({
                     "id": f['id'],
@@ -68,3 +38,38 @@ async def get_all_alerts():
             return {"alerts": alerts, "source": "local_fallback"}
         except Exception as e:
             return {"alerts": [], "error": str(e)}
+
+@router.get("/all")
+async def get_all_alerts():
+    """
+    Fetch all alerts from Keep or local metrics if Keep is unreachable.
+    """
+    return await fetch_all_alerts_logic()
+
+@router.get("/summary")
+async def get_alerts_summary():
+    """
+    Returns a summary of active alerts from Keep and internal state.
+    """
+    all_alerts_resp = await fetch_all_alerts_logic()
+    alerts = all_alerts_resp.get("alerts", [])
+
+    urgent = len([a for a in alerts if (a.get("severity") == "critical" or a.get("severity") == "urgent")])
+    warning = len([a for a in alerts if a.get("severity") == "warning"])
+
+    recent = []
+    for a in alerts[:5]:
+        recent.append({
+            "time": str(a.get("timestamp", "")).split("T")[-1][:8] if "T" in str(a.get("timestamp", "")) else "unknown",
+            "event": a.get("title", "Unknown Event"),
+            "status": "Active"
+        })
+
+    return {
+        "active_alerts": len(alerts),
+        "urgent": urgent,
+        "warning": warning,
+        "recent_events": recent or [
+            {"time": "00:00:00", "event": "No active alerts", "status": "Nominal"}
+        ]
+    }

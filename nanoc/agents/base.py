@@ -101,10 +101,17 @@ class BaseAgent:
                 args = parts[1].strip()
                 if tool_name in self.tools:
                     await self.log(f"Executing Tool: {tool_name}")
-                    result = self.tools[tool_name](args)
-                    return await self.think(f"Tool {tool_name} returned: {result}\nContinue based on this.")
+                    try:
+                        if asyncio.iscoroutinefunction(self.tools[tool_name]):
+                            result = await self.tools[tool_name](args)
+                        else:
+                            result = self.tools[tool_name](args)
+                        return await self.think(f"Tool {tool_name} returned: {result}\nContinue based on this.")
+                    except Exception as e:
+                        await self.log(f"Tool internal execution error: {e}")
+                        return await self.think(f"Tool {tool_name} execution failed with error: {e}. Try another approach or fix the arguments.")
             except Exception as e:
-                await self.log(f"Tool execution failed: {e}")
+                await self.log(f"ReAct parsing failed: {e}")
 
         return response
 

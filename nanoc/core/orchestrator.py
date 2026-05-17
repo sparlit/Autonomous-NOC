@@ -1,22 +1,29 @@
 import asyncio
 import json
+import sqlite3
 from datetime import datetime
 from typing import List
 from nanoc.agents.base import BaseAgent
 from nanoc.memory.memory import Memory
+from nanoc.core.event_bus import EventBus
+from nanoc.core.gate_manager import GateManager
+from nanoc.agents.analyst import Analyst
+from nanoc.agents.documentation import DocumentationAgent
 
 class Debater:
     def __init__(self, agents: List[BaseAgent]):
         self.agents = agents
 
     async def debate(self, topic: str) -> str:
+        # Select distinct agents if possible
         pro_agent = self.agents[0]
         con_agent = self.agents[1] if len(self.agents) > 1 else self.agents[0]
+        # Use a third agent for synthesis if available
+        synthesizer = self.agents[2] if len(self.agents) > 2 else self.agents[0]
 
         pro_view = await pro_agent.think(f"Debate PRO for: {topic}")
         con_view = await con_agent.think(f"Debate CON for: {topic}")
 
-        synthesizer = self.agents[0] # Use leader or first agent to synthesize
         decision = await synthesizer.think(f"Synthesize this debate and make a final decision.\nPRO: {pro_view}\nCON: {con_view}")
 
         return decision
@@ -32,10 +39,6 @@ class Orchestrator:
 
     async def run_loop(self):
         # Start event bus listener
-        from nanoc.core.event_bus import EventBus
-        from nanoc.core.gate_manager import GateManager
-        from nanoc.agents.analyst import Analyst
-
         bus = EventBus(self.memory)
         gm = GateManager(self.memory)
         analyst = Analyst("SystemAnalyst", self.memory)
@@ -56,7 +59,6 @@ class Orchestrator:
             gate_type = payload.get("type")
             print(f"[Orchestrator] Gate {gate_type} resolved for project {project_id}")
 
-            from nanoc.agents.documentation import DocumentationAgent
             doc_agent = DocumentationAgent("SystemDoc", "Documentation", self.memory)
             await doc_agent.update_docs(project_id, f"Gate {gate_type} resolved at {datetime.now()}")
 
@@ -71,59 +73,77 @@ class Orchestrator:
         bus.subscribe("gate/resolved", handle_gate_resolved)
         asyncio.create_task(bus.start_polling())
 
-        semaphore = asyncio.Semaphore(5)  # Limit concurrent tasks
+        task_queue = asyncio.Queue()
 
         async def process_task(task):
-            async with semaphore:
-                role = task['assigned_to']
-                if role in self.agents:
-                    agent = self.agents[role]
-                    await agent.log(f"Processing task {task['id']} in parallel: {task['description']}")
+            role = task['assigned_to']
+            if role in self.agents:
+                agent = self.agents[role]
+                await agent.log(f"Processing task {task['id']} in worker pool: {task['description']}")
 
-                    try:
-                        # Use the unified agent interface
-                        if role == "Architect" and len(self.agents) > 1:
-                            # Use internal debate for architectural decisions
-                            debater = Debater(list(self.agents.values()))
-                            result = await debater.debate(task['description'])
+                try:
+                    # Use the unified agent interface
+                    if role == "Architect" and len(self.agents) > 1:
+                        # Use internal debate for architectural decisions
+                        debater = Debater(list(self.agents.values()))
+                        result = await debater.debate(task['description'])
+
+                        # Publish gate result to unblock workflow
+                        project_id = task.get('project_id')
+                        gate_id = gm.get_active_gate(project_id)
+                        self.memory.publish_event("gate/result-added", {
+                            "gate_id": gate_id,
+                            "project_id": project_id,
+                            "type": "design_review",
+                            "status": "pass",
+                            "content": result
+                        })
+                    else:
+                        result = await agent.handle_task(task)
+
+                    # Special case for Reviewer to re-assign if failed
+                    if role == "Reviewer" and "APPROVED" not in result:
+                        self.memory.create_task(
+                            f"Fix flaws in previous work based on review: {result}\nOriginal Task: {task['description']}",
+                            assigned_to="Coder",
+                            project_id=task.get('project_id')
+                        )
+
+                    with sqlite3.connect(self.memory.db_path) as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("UPDATE tasks SET status = 'completed', result = ?, updated_at = ? WHERE id = ?",
+                                       (result, datetime.now(), task['id']))
+                        conn.commit()
+                except Exception as e:
+                    await agent.log(f"Error processing task {task['id']}: {e}")
+
+                    # Retry logic
+                    retry_count = task.get('retry_count', 0) + 1
+                    max_retries = task.get('max_retries', 3)
+
+                    with sqlite3.connect(self.memory.db_path) as conn:
+                        cursor = conn.cursor()
+                        if retry_count <= max_retries:
+                            # Re-queue for retry
+                            cursor.execute("UPDATE tasks SET status = 'pending', retry_count = ?, result = ?, updated_at = ? WHERE id = ?",
+                                           (retry_count, str(e), datetime.now(), task['id']))
                         else:
-                            result = await agent.handle_task(task)
+                            # Final failure
+                            cursor.execute("UPDATE tasks SET status = 'failed', result = ?, updated_at = ? WHERE id = ?",
+                                           (str(e), datetime.now(), task['id']))
+                        conn.commit()
 
-                        # Special case for Reviewer to re-assign if failed
-                        if role == "Reviewer" and "APPROVED" not in result:
-                            self.memory.create_task(
-                                f"Fix flaws in previous work based on review: {result}\nOriginal Task: {task['description']}",
-                                assigned_to="Coder",
-                                project_id=task.get('project_id')
-                            )
+        async def worker():
+            while True:
+                task = await task_queue.get()
+                try:
+                    await process_task(task)
+                finally:
+                    task_queue.task_done()
 
-                        import sqlite3
-                        with sqlite3.connect(self.memory.db_path) as conn:
-                            cursor = conn.cursor()
-                            cursor.execute("UPDATE tasks SET status = 'completed', result = ?, updated_at = ? WHERE id = ?",
-                                           (result, datetime.now(), task['id']))
-                            conn.commit()
-                    except Exception as e:
-                        await agent.log(f"Error processing task {task['id']}: {e}")
+        # Start 5 workers
+        workers = [asyncio.create_task(worker()) for _ in range(5)]
 
-                        # Retry logic
-                        retry_count = task.get('retry_count', 0) + 1
-                        max_retries = task.get('max_retries', 3)
-
-                        import sqlite3
-                        with sqlite3.connect(self.memory.db_path) as conn:
-                            cursor = conn.cursor()
-                            if retry_count <= max_retries:
-                                # Re-queue for retry
-                                cursor.execute("UPDATE tasks SET status = 'pending', retry_count = ?, result = ?, updated_at = ? WHERE id = ?",
-                                               (retry_count, str(e), datetime.now(), task['id']))
-                            else:
-                                # Final failure
-                                cursor.execute("UPDATE tasks SET status = 'failed', result = ?, updated_at = ? WHERE id = ?",
-                                               (str(e), datetime.now(), task['id']))
-                            conn.commit()
-
-        import sqlite3
         while True:
             # Check for all pending tasks in memory
             with sqlite3.connect(self.memory.db_path) as conn:
@@ -131,14 +151,13 @@ class Orchestrator:
                 cursor = conn.cursor()
                 # Use a transaction to mark tasks as 'processing' to avoid duplicate work
                 cursor.execute("BEGIN IMMEDIATE")
-                cursor.execute("SELECT * FROM tasks WHERE status = 'pending' ORDER BY created_at ASC")
+                cursor.execute("SELECT * FROM tasks WHERE status = 'pending' ORDER BY priority DESC, created_at ASC")
                 tasks = [dict(row) for row in cursor.fetchall()]
                 for task in tasks:
                     cursor.execute("UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?", (datetime.now(), task['id']))
                 conn.commit()
 
-            if tasks:
-                # Process all found tasks concurrently
-                await asyncio.gather(*(process_task(task) for task in tasks))
+            for task in tasks:
+                await task_queue.put(task)
 
             await asyncio.sleep(5)

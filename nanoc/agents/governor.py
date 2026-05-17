@@ -67,9 +67,6 @@ class Governor(BaseAgent):
             await asyncio.sleep(60) # Run every minute
 
     async def gather_metrics(self) -> Dict[str, Any]:
-        import sqlite3
-        from nanoc.core.config import settings
-
         metrics = {
             "error_rate": 0.0,
             "total_cost": 0.0,
@@ -77,7 +74,7 @@ class Governor(BaseAgent):
             "latency_ms": 0
         }
 
-        with sqlite3.connect(self.memory.db_path) as conn:
+        with self.memory.get_connection() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 

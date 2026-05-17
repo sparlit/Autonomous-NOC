@@ -2,11 +2,20 @@ import sqlite3
 import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from contextlib import contextmanager
 
 class Memory:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._init_db()
+
+    @contextmanager
+    def get_connection(self):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
@@ -32,6 +41,7 @@ class Memory:
                     result TEXT,
                     retry_count INTEGER DEFAULT 0,
                     max_retries INTEGER DEFAULT 3,
+                    priority INTEGER DEFAULT 0,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
@@ -90,7 +100,7 @@ class Memory:
         Returns:
             int: The newly inserted event row ID.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('INSERT INTO events (topic, payload, schema_version, timestamp) VALUES (?, ?, ?, ?)',
                            (topic, json.dumps(payload), schema_version, datetime.now()))
@@ -108,7 +118,7 @@ class Memory:
         Returns:
         	List[Dict[str, Any]]: A list of dictionaries representing metric rows; each dictionary contains the columns from the metrics table (for example: id, metric_name, value, unit, tags, timestamp).
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             if name:
@@ -128,7 +138,7 @@ class Memory:
         Returns:
         	events (List[Dict[str, Any]]): List of event records as dictionaries, ordered by `id` ascending.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             if topic:
@@ -138,28 +148,28 @@ class Memory:
             return [dict(row) for row in cursor.fetchall()]
 
     def record_metric(self, name: str, value: float, unit: str = "", tags: Dict[str, str] = None):
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('INSERT INTO metrics (metric_name, value, unit, tags, timestamp) VALUES (?, ?, ?, ?, ?)',
                            (name, value, unit, json.dumps(tags or {}), datetime.now()))
             conn.commit()
 
     def add_log(self, agent_id: str, content: str):
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('INSERT INTO logs (agent_id, content, timestamp) VALUES (?, ?, ?)',
                            (agent_id, content, datetime.now()))
             conn.commit()
 
     def upsert_knowledge(self, key: str, value: Any):
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('INSERT OR REPLACE INTO knowledge (key, value, updated_at) VALUES (?, ?, ?)',
                            (key, json.dumps(value), datetime.now()))
             conn.commit()
 
     def get_knowledge(self, key: str) -> Optional[Any]:
-        with sqlite3.connect(self.db_path) as conn:
+        with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT value FROM knowledge WHERE key = ?', (key,))
             row = cursor.fetchone()
@@ -167,12 +177,12 @@ class Memory:
                 return json.loads(row[0])
             return None
 
-    def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None, max_retries: int = 3) -> int:
-        with sqlite3.connect(self.db_path) as conn:
+    def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None, max_retries: int = 3, priority: int = 0) -> int:
+        with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO tasks (description, assigned_to, status, parent_id, project_id, max_retries, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (description, assigned_to, 'pending', parent_id, project_id, max_retries, datetime.now(), datetime.now()))
+                INSERT INTO tasks (description, assigned_to, status, parent_id, project_id, max_retries, priority, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (description, assigned_to, 'pending', parent_id, project_id, max_retries, priority, datetime.now(), datetime.now()))
             conn.commit()
             return cursor.lastrowid

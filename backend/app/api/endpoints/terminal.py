@@ -1,12 +1,17 @@
 import asyncio
 import json
 import os
-import pty
 import signal
 import struct
-import fcntl
-import termios
+import platform
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from nanoc.core.config import settings
+
+# Unix-specific imports
+if platform.system() != "Windows":
+    import pty
+    import fcntl
+    import termios
 
 router = APIRouter()
 
@@ -24,12 +29,17 @@ class TerminalSession:
 
     def set_winsize(self, rows, cols, xpixel=0, ypixel=0):
         """Sets the terminal window size using ioctl."""
-        if self.fd is not None:
+        if self.fd is not None and platform.system() != "Windows":
             winsize = struct.pack("HHHH", rows, cols, xpixel, ypixel)
             fcntl.ioctl(self.fd, termios.TIOCSWINSZ, winsize)
 
     async def start(self):
         """Forks a new PTY and executes a shell."""
+        if platform.system() == "Windows":
+            await self.websocket.send_text("Error: Terminal feature not supported on Windows.")
+            await self.websocket.close()
+            return
+
         self.pid, self.fd = pty.fork()
         if self.pid == 0:  # Child process
             os.environ["TERM"] = "xterm-256color"
@@ -84,10 +94,17 @@ class TerminalSession:
                     pass
 
 @router.websocket("/ws")
-async def terminal_websocket(websocket: WebSocket):
+async def terminal_websocket(websocket: WebSocket, token: str = None):
     """
     WebSocket endpoint for terminal access.
     """
+    # Basic security check
+    if token != settings.TERMINAL_ACCESS_TOKEN:
+        await websocket.accept()
+        await websocket.send_text("Unauthorized: Invalid token")
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
     session = TerminalSession(websocket)
     try:

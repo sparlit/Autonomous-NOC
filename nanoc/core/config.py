@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     STAGING_DIR: str = "nanoc/staging"
     LOGS_DIR: str = "nanoc/logs"
 
+    # Security
+    TERMINAL_ACCESS_TOKEN: str = "secret-foss-token"
+
     # LLM Settings
     DEFAULT_PROVIDER: str = "openrouter" # openrouter or ollama
     OPENROUTER_API_KEY: Optional[str] = None
