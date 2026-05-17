@@ -217,6 +217,8 @@ class Planner(BaseAgent):
                 self.memory.create_task(f"{project_id}: {task_desc}", assigned_to="Coder")
         return todo_list
 
+import ast
+
 class Coder(BaseAgent):
     async def handle_task(self, task: Dict[str, Any]) -> str:
         desc = task['description']
@@ -224,12 +226,32 @@ class Coder(BaseAgent):
             desc = f"{task['project_id']}: {desc}"
         return await self.write_code(desc)
 
+    async def validate_python(self, code: str) -> bool:
+        """Validate that the provided string is valid Python code."""
+        try:
+            # Strip markdown if present
+            clean_code = code
+            if "```python" in code:
+                clean_code = code.split("```python")[1].split("```")[0].strip()
+            elif "```" in code:
+                clean_code = code.split("```")[1].split("```")[0].strip()
+
+            ast.parse(clean_code)
+            return True
+        except SyntaxError:
+            return False
+
     async def write_code(self, task: str):
         await self.log(f"Coding task: {task}")
         project_id = task.split(":")[0] if ":" in task else "unknown"
 
         prompt = f"Write the Python code to solve this task:\n{task}\nProvide ONLY the code."
         code = await self.think(prompt)
+
+        # Basic syntax validation
+        if not await self.validate_python(code):
+            await self.log("Warning: Generated code has syntax errors. Retrying once...")
+            code = await self.think(f"The previous code had a syntax error. Please rewrite it carefully:\n{task}")
 
         # Publish result to the event bus
         self.memory.publish_event("worker/response", {
@@ -241,7 +263,11 @@ class Coder(BaseAgent):
         })
 
         # Verify and review before committing
-        self.memory.create_task(f"{project_id}: Review this code for flaws:\n{code}", assigned_to="Reviewer")
+        self.memory.create_task(
+            f"{project_id}: Review this code for flaws:\n{code}",
+            assigned_to="Reviewer",
+            project_id=project_id
+        )
         return code
 
 class Reviewer(BaseAgent):

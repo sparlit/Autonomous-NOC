@@ -70,11 +70,17 @@ class Governor(BaseAgent):
                 })
             elif action == "SCALE_UP":
                 await self.log("Autonomous scaling: increasing agent capacity.")
-                # Logic to start more agent workers
                 self.memory.publish_event("system/scale-up", {"role": "Coder", "reason": "High backlog"})
+            elif action == "SCALE_DOWN":
+                await self.log("Autonomous scaling: decreasing agent capacity.")
+                self.memory.publish_event("system/scale-down", {"reason": "Resource pressure"})
             elif action == "THROTTLE_COST":
                 await self.log("Budget warning: throttling model usage.")
-                # Logic to switch to cheaper models
+                self.memory.upsert_knowledge("system/model_override", "gpt-4o-mini") # Example cheaper model
+
+            # Periodic maintenance
+            await self.log("Running periodic maintenance (database cleanup)...")
+            self.memory.cleanup_old_tasks(days=settings.RETENTION_DAYS if hasattr(settings, "RETENTION_DAYS") else 7)
 
             await asyncio.sleep(60) # Run every minute
 

@@ -6,11 +6,16 @@ from nanoc.core.config import settings
 class LLMProvider:
     def __init__(self, provider: str = None, model: str = None):
         self.provider = provider or settings.DEFAULT_PROVIDER
-        self.model = model or settings.DEFAULT_MODEL
+        self.default_model = model or settings.DEFAULT_MODEL
+        self.current_model = self.default_model
 
     async def complete(self, prompt: str, system_prompt: str = "You are a helpful NOC agent.") -> str:
-        # Check for model override in settings or via governor
-        # (This is a simplified version of adaptive tuning)
+        # Check for model override in knowledge base (e.g. from Governor)
+        from nanoc.memory.memory import Memory
+        mem = Memory(settings.DB_PATH)
+        override = mem.get_knowledge("system/model_override")
+        self.current_model = override if override else self.default_model
+
         start_time = asyncio.get_event_loop().time()
         try:
             if self.provider == "openrouter":
@@ -38,10 +43,12 @@ class LLMProvider:
         prompt_tokens = len(prompt) // 4
         completion_tokens = len(response) // 4
 
-        # Estimate cost based on common model pricing ($0.01 per 1k tokens)
-        cost = ((prompt_tokens + completion_tokens) / 1000) * 0.01
+        # Estimate cost based on model (simplified)
+        # premium models cost more
+        rate = 0.03 if "gpt-4" in self.current_model or "claude-3" in self.current_model else 0.002
+        cost = ((prompt_tokens + completion_tokens) / 1000) * rate
 
-        hub.record_token_usage(self.model, prompt_tokens, completion_tokens, cost)
+        hub.record_token_usage(self.current_model, prompt_tokens, completion_tokens, cost)
         hub.record_latency("llm_complete", duration_ms)
 
     def _record_error(self, error_msg):
@@ -57,7 +64,7 @@ class LLMProvider:
             "Content-Type": "application/json"
         }
         data = {
-            "model": self.model,
+            "model": self.current_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
@@ -70,7 +77,7 @@ class LLMProvider:
 
     async def _ollama_complete(self, prompt: str, system_prompt: str) -> str:
         data = {
-            "model": self.model,
+            "model": self.current_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}

@@ -37,11 +37,24 @@ class Orchestrator:
     def add_agent(self, agent: BaseAgent):
         self.agents[agent.role] = agent
 
+    async def scale_workers(self, target_count: int, worker_tasks: List[asyncio.Task], worker_func):
+        """Scale the worker pool to the target count."""
+        current_count = len(worker_tasks)
+        if target_count > current_count:
+            print(f"[Orchestrator] Scaling UP: {current_count} -> {target_count}")
+            for _ in range(target_count - current_count):
+                worker_tasks.append(asyncio.create_task(worker_func()))
+        elif target_count < current_count:
+            print(f"[Orchestrator] Scaling DOWN: {current_count} -> {target_count}")
+            for _ in range(current_count - target_count):
+                task = worker_tasks.pop()
+                task.cancel()
+
     async def run_loop(self):
         # Start event bus listener
         bus = EventBus(self.memory)
         gm = GateManager(self.memory)
-        analyst = Analyst("SystemAnalyst", self.memory)
+        analyst = self.agents.get("Analyst") or Analyst("SystemAnalyst", self.memory)
 
         async def handle_gate_result(payload):
             # payload: { "type": "...", "status": "pass/fail", "gate_id": "..." }
@@ -141,8 +154,18 @@ class Orchestrator:
                 finally:
                     task_queue.task_done()
 
-        # Start 5 workers
+        # Start initial workers
         workers = [asyncio.create_task(worker()) for _ in range(5)]
+
+        async def handle_scale_up(payload):
+            await self.scale_workers(len(workers) + 2, workers, worker)
+
+        async def handle_scale_down(payload):
+            new_count = max(1, len(workers) - 2)
+            await self.scale_workers(new_count, workers, worker)
+
+        bus.subscribe("system/scale-up", handle_scale_up)
+        bus.subscribe("system/scale-down", handle_scale_down)
 
         while True:
             # Check for all pending tasks in memory

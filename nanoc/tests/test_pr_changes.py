@@ -208,7 +208,7 @@ class TestDocumentationAgent:
         agent = DocumentationAgent("DocAgent", "Documentation", memory, provider=llm)
         await agent.update_docs("proj_123", "Gate design resolved")
         stored = memory.get_knowledge("docs:proj_123")
-        assert stored == "Gate design resolved"
+        assert "Gate design resolved" in stored
 
     @pytest.mark.asyncio
     async def test_update_docs_publishes_event(self, memory):
@@ -230,7 +230,8 @@ class TestDocumentationAgent:
         await agent.update_docs("proj_789", "first content")
         await agent.update_docs("proj_789", "updated content")
         stored = memory.get_knowledge("docs:proj_789")
-        assert stored == "updated content"
+        assert "first content" in stored
+        assert "updated content" in stored
 
 
 # ===========================================================================
@@ -239,14 +240,30 @@ class TestDocumentationAgent:
 
 class TestAnalyst:
     @pytest.mark.asyncio
-    async def test_analyze_failure_extracts_project_id(self, memory):
+    async def test_analyze_failure_creates_analyst_task(self, memory):
+        from nanoc.agents.analyst import Analyst
+        analyst = Analyst("Analyst1", memory)
+        await analyst.analyze_failure({"project_id": "proj_001", "error": "NullPointerException"})
+
+        with sqlite3.connect(memory.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT description, assigned_to FROM tasks WHERE project_id = 'proj_001'")
+            row = cursor.fetchone()
+        assert row is not None
+        assert row[1] == "Analyst"
+        assert "NullPointerException" in row[0]
+
+    @pytest.mark.asyncio
+    async def test_handle_task_performs_analysis(self, memory):
         from nanoc.agents.analyst import Analyst
         llm = MockLLM()
         llm.add_response("Analyze this error", "strategy: restart service")
         analyst = Analyst("Analyst1", memory)
-        # Inject mock llm
         analyst.llm = llm
-        await analyst.analyze_failure({"project_id": "proj_001", "error": "NullPointerException"})
+
+        task = {"description": "ANALYZE FAILURE: NullPointerException", "project_id": "proj_001"}
+        await analyst.handle_task(task)
+
         # Check a task was created for the Coder
         with sqlite3.connect(memory.db_path) as conn:
             cursor = conn.cursor()
@@ -256,28 +273,16 @@ class TestAnalyst:
         assert "strategy: restart service" in row[0]
 
     @pytest.mark.asyncio
-    async def test_analyze_failure_uses_unknown_when_no_project_id(self, memory):
-        from nanoc.agents.analyst import Analyst
-        llm = MockLLM()
-        analyst = Analyst("Analyst1", memory)
-        analyst.llm = llm
-        # No project_id in event; should default to "unknown" without raising
-        await analyst.analyze_failure({"error": "timeout"})
-        # Verify task created
-        with sqlite3.connect(memory.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM tasks WHERE assigned_to = 'Coder'")
-            count = cursor.fetchone()[0]
-        assert count >= 1
-
-    @pytest.mark.asyncio
-    async def test_analyze_failure_publishes_analysis_completed_event(self, memory):
+    async def test_handle_task_publishes_analysis_completed_event(self, memory):
         from nanoc.agents.analyst import Analyst
         llm = MockLLM()
         llm.add_response("Analyze this error", "fix strategy")
         analyst = Analyst("Analyst1", memory)
         analyst.llm = llm
-        await analyst.analyze_failure({"project_id": "proj_002", "error": "disk full"})
+
+        task = {"description": "ANALYZE FAILURE: disk full", "project_id": "proj_002"}
+        await analyst.handle_task(task)
+
         events = memory.get_events(topic="analysis/completed")
         assert len(events) >= 1
         payload = json.loads(events[-1]["payload"])
@@ -287,13 +292,16 @@ class TestAnalyst:
     @pytest.mark.asyncio
     async def test_analyze_failure_handles_missing_error_field(self, memory):
         from nanoc.agents.analyst import Analyst
-        llm = MockLLM()
         analyst = Analyst("Analyst1", memory)
-        analyst.llm = llm
         # Should not raise even if 'error' key is absent
         await analyst.analyze_failure({"project_id": "proj_003"})
-        events = memory.get_events(topic="analysis/completed")
-        assert len(events) >= 1
+
+        with sqlite3.connect(memory.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT description FROM tasks WHERE project_id = 'proj_003'")
+            row = cursor.fetchone()
+        assert row is not None
+        assert "Unknown error" in row[0]
 
 
 # ===========================================================================

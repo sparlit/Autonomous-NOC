@@ -56,6 +56,7 @@ async def startup_event():
     planner = Planner("Planner", "Planner", memory)
     coder = Coder("Coder", "Coder", memory)
     reviewer = Reviewer("Reviewer", "Reviewer", memory)
+    analyst = Analyst("Analyst", memory)
 
     orchestrator = Orchestrator(memory, leader)
     orchestrator.add_agent(leader)
@@ -63,6 +64,7 @@ async def startup_event():
     orchestrator.add_agent(planner)
     orchestrator.add_agent(coder)
     orchestrator.add_agent(reviewer)
+    orchestrator.add_agent(analyst)
 
     # Background threads
     threading.Thread(target=inbox_watcher, daemon=True).start()
