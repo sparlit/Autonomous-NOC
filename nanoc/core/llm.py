@@ -2,6 +2,8 @@ import httpx
 import json
 import asyncio
 from nanoc.core.config import settings
+from nanoc.core.monitoring import TelemetryHub
+from nanoc.memory.memory import Memory
 
 class LLMProvider:
     def __init__(self, provider: str = None, model: str = None):
@@ -9,14 +11,17 @@ class LLMProvider:
         self.model = model or settings.DEFAULT_MODEL
 
     async def complete(self, prompt: str, system_prompt: str = "You are a helpful NOC agent.") -> str:
-        # Check for model override in settings or via governor
-        # (This is a simplified version of adaptive tuning)
+        # Check for model override in knowledge base
+        memory = Memory(settings.DB_PATH)
+        override = memory.get_knowledge("system/model_override")
+        current_model = override if override else self.model
+
         start_time = asyncio.get_event_loop().time()
         try:
             if self.provider == "openrouter":
-                response = await self._openrouter_complete(prompt, system_prompt)
+                response = await self._openrouter_complete(prompt, system_prompt, current_model)
             elif self.provider == "ollama":
-                response = await self._ollama_complete(prompt, system_prompt)
+                response = await self._ollama_complete(prompt, system_prompt, current_model)
             else:
                 raise ValueError(f"Unknown provider: {self.provider}")
 
@@ -28,10 +33,6 @@ class LLMProvider:
             raise
 
     def _record_telemetry(self, prompt, response, duration_ms):
-        from nanoc.core.monitoring import TelemetryHub
-        from nanoc.memory.memory import Memory
-        from nanoc.core.config import settings
-
         hub = TelemetryHub(Memory(settings.DB_PATH))
 
         # Improved token counting estimation (roughly 4 chars per token)
@@ -45,19 +46,16 @@ class LLMProvider:
         hub.record_latency("llm_complete", duration_ms)
 
     def _record_error(self, error_msg):
-        from nanoc.core.monitoring import TelemetryHub
-        from nanoc.memory.memory import Memory
-        from nanoc.core.config import settings
         hub = TelemetryHub(Memory(settings.DB_PATH))
         hub.record_error("LLMProvider", error_msg)
 
-    async def _openrouter_complete(self, prompt: str, system_prompt: str) -> str:
+    async def _openrouter_complete(self, prompt: str, system_prompt: str, model: str) -> str:
         headers = {
             "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
             "Content-Type": "application/json"
         }
         data = {
-            "model": self.model,
+            "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
@@ -68,9 +66,9 @@ class LLMProvider:
             response.raise_for_status()
             return response.json()['choices'][0]['message']['content']
 
-    async def _ollama_complete(self, prompt: str, system_prompt: str) -> str:
+    async def _ollama_complete(self, prompt: str, system_prompt: str, model: str) -> str:
         data = {
-            "model": self.model,
+            "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}

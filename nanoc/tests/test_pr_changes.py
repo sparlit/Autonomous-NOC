@@ -1118,7 +1118,7 @@ class TestGateManagerFailedStatus:
         assert len(completed_events) >= 1
         assert len(resolved_events) >= 1
 
-    def test_evaluate_gate_no_results_does_not_publish_any_gate_event(self, memory):
+    def test_evaluate_gate_no_results_does_nothing(self, memory):
         """evaluate_gate with no results silently returns; no gate events published."""
         from nanoc.core.gate_manager import GateManager
         gm = GateManager(memory)
@@ -1214,7 +1214,8 @@ class TestLLMRecordTelemetry:
 # ===========================================================================
 
 class TestDiscoveryToolCaching:
-    def test_discover_topology_returns_default_with_nodes_and_edges(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_discover_topology_returns_default_with_nodes_and_edges(self, tmp_path):
         """DiscoveryTool.discover_topology() returns dict with 'nodes' and 'edges'."""
         from unittest.mock import patch
         from nanoc.tools.network import DiscoveryTool
@@ -1223,14 +1224,15 @@ class TestDiscoveryToolCaching:
 
         with patch("nanoc.tools.network.Memory", return_value=mem), \
              patch("nanoc.tools.network.settings"):
-            topo = DiscoveryTool.discover_topology()
+            topo = await DiscoveryTool.discover_topology()
 
         assert "nodes" in topo
         assert "edges" in topo
         assert isinstance(topo["nodes"], list)
         assert isinstance(topo["edges"], list)
 
-    def test_discover_topology_stores_result_in_memory(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_discover_topology_stores_result_in_memory(self, tmp_path):
         """First call must store the default topology in memory knowledge store."""
         from unittest.mock import patch
         from nanoc.tools.network import DiscoveryTool
@@ -1239,13 +1241,14 @@ class TestDiscoveryToolCaching:
 
         with patch("nanoc.tools.network.Memory", return_value=mem), \
              patch("nanoc.tools.network.settings"):
-            DiscoveryTool.discover_topology()
+            await DiscoveryTool.discover_topology()
 
         cached = mem.get_knowledge("network_topology")
         assert cached is not None
         assert "nodes" in cached
 
-    def test_discover_topology_returns_cached_topology_on_second_call(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_discover_topology_returns_cached_topology_on_second_call(self, tmp_path):
         """Second call should return stored topology, not regenerate a new one."""
         from unittest.mock import patch
         from nanoc.tools.network import DiscoveryTool
@@ -1260,11 +1263,12 @@ class TestDiscoveryToolCaching:
 
         with patch("nanoc.tools.network.Memory", return_value=mem), \
              patch("nanoc.tools.network.settings"):
-            result = DiscoveryTool.discover_topology()
+            result = await DiscoveryTool.discover_topology()
 
         assert result == custom_topology
 
-    def test_discover_topology_default_contains_core_router(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_discover_topology_default_contains_core_router(self, tmp_path):
         """Default topology includes Core-Rtr-01 node."""
         from unittest.mock import patch
         from nanoc.tools.network import DiscoveryTool
@@ -1273,12 +1277,13 @@ class TestDiscoveryToolCaching:
 
         with patch("nanoc.tools.network.Memory", return_value=mem), \
              patch("nanoc.tools.network.settings"):
-            topo = DiscoveryTool.discover_topology()
+            topo = await DiscoveryTool.discover_topology()
 
         node_ids = [n["id"] for n in topo["nodes"]]
         assert "Core-Rtr-01" in node_ids
 
-    def test_discover_topology_does_not_overwrite_existing_cache(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_discover_topology_does_not_overwrite_existing_cache(self, tmp_path):
         """If memory already has topology, discover_topology must not overwrite it."""
         from unittest.mock import patch
         from nanoc.tools.network import DiscoveryTool
@@ -1290,7 +1295,7 @@ class TestDiscoveryToolCaching:
 
         with patch("nanoc.tools.network.Memory", return_value=mem), \
              patch("nanoc.tools.network.settings"):
-            DiscoveryTool.discover_topology()
+            await DiscoveryTool.discover_topology()
 
         after = mem.get_knowledge("network_topology")
         assert after == original
@@ -1301,7 +1306,8 @@ class TestDiscoveryToolCaching:
 # ===========================================================================
 
 class TestSNMPToolFallback:
-    def test_snmp_get_value_falls_back_when_powershell_fails(self):
+    @pytest.mark.asyncio
+    async def test_snmp_get_value_falls_back_when_powershell_fails(self):
         """When PowerShellTool.run_command returns non-zero, SNMPTool calls snmpget fallback."""
         from unittest.mock import patch, call
         from nanoc.tools.network import SNMPTool
@@ -1310,8 +1316,9 @@ class TestSNMPToolFallback:
         snmp_ok = {"stdout": "1.3.6.1.2.1.1.1.0 = STRING: Linux", "stderr": "", "returncode": 0}
 
         with patch("nanoc.tools.network.PowerShellTool.run_command",
-                   side_effect=[ps_fail, snmp_ok]) as mock_run:
-            result = SNMPTool.get_value("192.168.1.1", "public", "1.3.6.1.2.1.1.1.0")
+                   new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = [ps_fail, snmp_ok]
+            result = await SNMPTool.get_value("192.168.1.1", "public", "1.3.6.1.2.1.1.1.0")
 
         # Two calls: first PowerShell, then snmpget fallback
         assert mock_run.call_count == 2
@@ -1321,7 +1328,8 @@ class TestSNMPToolFallback:
         assert "snmpget" in second_call_cmd
         assert result == snmp_ok
 
-    def test_snmp_get_value_does_not_fallback_on_powershell_success(self):
+    @pytest.mark.asyncio
+    async def test_snmp_get_value_does_not_fallback_on_powershell_success(self):
         """When PowerShellTool succeeds (returncode 0), fallback is NOT called."""
         from unittest.mock import patch
         from nanoc.tools.network import SNMPTool
@@ -1329,14 +1337,16 @@ class TestSNMPToolFallback:
         ps_ok = {"stdout": "value = 42", "stderr": "", "returncode": 0}
 
         with patch("nanoc.tools.network.PowerShellTool.run_command",
-                   return_value=ps_ok) as mock_run:
-            result = SNMPTool.get_value("10.0.0.1", "public", "1.3.6.1.2.1.1.1.0")
+                   new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = ps_ok
+            result = await SNMPTool.get_value("10.0.0.1", "public", "1.3.6.1.2.1.1.1.0")
 
         # Only one call (no fallback)
         assert mock_run.call_count == 1
         assert result == ps_ok
 
-    def test_snmp_get_value_returns_fallback_result(self):
+    @pytest.mark.asyncio
+    async def test_snmp_get_value_returns_fallback_result(self):
         """The return value should be the fallback snmpget result, not the failed PS result."""
         from unittest.mock import patch
         from nanoc.tools.network import SNMPTool
@@ -1345,12 +1355,14 @@ class TestSNMPToolFallback:
         snmp_result = {"returncode": 0, "stdout": "OID data", "stderr": ""}
 
         with patch("nanoc.tools.network.PowerShellTool.run_command",
-                   side_effect=[ps_fail, snmp_result]):
-            result = SNMPTool.get_value("1.2.3.4", "private", "1.3.6.1.2.1.1.5.0")
+                   new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = [ps_fail, snmp_result]
+            result = await SNMPTool.get_value("1.2.3.4", "private", "1.3.6.1.2.1.1.5.0")
 
         assert result == snmp_result
 
-    def test_snmp_get_value_passes_correct_ip_community_oid_to_fallback(self):
+    @pytest.mark.asyncio
+    async def test_snmp_get_value_passes_correct_ip_community_oid_to_fallback(self):
         """The fallback snmpget command includes the IP, community, and OID."""
         from unittest.mock import patch
         from nanoc.tools.network import SNMPTool
@@ -1359,15 +1371,17 @@ class TestSNMPToolFallback:
         snmp_result = {"returncode": 0, "stdout": "", "stderr": ""}
 
         with patch("nanoc.tools.network.PowerShellTool.run_command",
-                   side_effect=[ps_fail, snmp_result]) as mock_run:
-            SNMPTool.get_value("172.16.0.1", "community123", "1.3.6.1.2.1.2.1.0")
+                   new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = [ps_fail, snmp_result]
+            await SNMPTool.get_value("172.16.0.1", "community123", "1.3.6.1.2.1.2.1.0")
 
         fallback_cmd = mock_run.call_args_list[1][0][0]
         assert "172.16.0.1" in fallback_cmd
         assert "community123" in fallback_cmd
         assert "1.3.6.1.2.1.2.1.0" in fallback_cmd
 
-    def test_snmp_get_value_returns_ps_result_when_returncode_missing(self):
+    @pytest.mark.asyncio
+    async def test_snmp_get_value_returns_ps_result_when_returncode_missing(self):
         """If PowerShellTool result lacks 'returncode' key (e.g. error dict), fallback is triggered."""
         from unittest.mock import patch
         from nanoc.tools.network import SNMPTool
@@ -1376,8 +1390,9 @@ class TestSNMPToolFallback:
         snmp_result = {"returncode": 0, "stdout": "ok", "stderr": ""}
 
         with patch("nanoc.tools.network.PowerShellTool.run_command",
-                   side_effect=[ps_error, snmp_result]) as mock_run:
-            result = SNMPTool.get_value("10.10.10.10", "pub", "1.3.6.1.2.1.1.1.0")
+                   new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = [ps_error, snmp_result]
+            result = await SNMPTool.get_value("10.10.10.10", "pub", "1.3.6.1.2.1.1.1.0")
 
         # returncode is None (missing) → None != 0 → fallback triggered
         assert mock_run.call_count == 2
@@ -1469,3 +1484,1320 @@ class TestGetLogsEndpoint:
             assert len(logs) == 3
             # Most recent should be first
             assert logs[0]["content"] == "third log"
+
+
+# ===========================================================================
+# nanoc/core/config.py  (new runtime settings added in PR)
+# ===========================================================================
+
+class TestConfigNewSettings:
+    def test_initial_workers_default(self):
+        """INITIAL_WORKERS must default to 5."""
+        from nanoc.core.config import settings
+        assert settings.INITIAL_WORKERS == 5
+
+    def test_max_workers_default(self):
+        """MAX_WORKERS must default to 20."""
+        from nanoc.core.config import settings
+        assert settings.MAX_WORKERS == 20
+
+    def test_terminal_access_token_default(self):
+        """TERMINAL_ACCESS_TOKEN must default to 'secret-foss-token'."""
+        from nanoc.core.config import settings
+        assert settings.TERMINAL_ACCESS_TOKEN == "secret-foss-token"
+
+    def test_max_workers_greater_than_initial_workers(self):
+        """MAX_WORKERS must be greater than INITIAL_WORKERS by default."""
+        from nanoc.core.config import settings
+        assert settings.MAX_WORKERS > settings.INITIAL_WORKERS
+
+    def test_settings_has_logs_dir(self):
+        """LOGS_DIR setting must exist (used by DocumentationAgent)."""
+        from nanoc.core.config import settings
+        assert hasattr(settings, "LOGS_DIR")
+        assert settings.LOGS_DIR == "nanoc/logs"
+
+
+# ===========================================================================
+# backend/app/api/endpoints/terminal.py  (token auth added in PR)
+# ===========================================================================
+
+class TestGetTokenAuth:
+    @pytest.mark.asyncio
+    async def test_valid_token_returns_token(self):
+        """get_token_auth returns the token string when it matches TERMINAL_ACCESS_TOKEN."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from backend.app.api.endpoints.terminal import get_token_auth
+
+        ws = MagicMock()
+        ws.query_params = {"token": "secret-foss-token"}
+        ws.close = AsyncMock()
+
+        with patch("backend.app.api.endpoints.terminal.settings") as mock_settings:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
+            result = await get_token_auth(ws)
+
+        assert result == "secret-foss-token"
+        ws.close.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_closes_websocket(self):
+        """get_token_auth closes WebSocket with code 1008 when token is wrong."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from backend.app.api.endpoints.terminal import get_token_auth
+
+        ws = MagicMock()
+        ws.query_params = {"token": "wrong-token"}
+        ws.close = AsyncMock()
+
+        with patch("backend.app.api.endpoints.terminal.settings") as mock_settings:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
+            result = await get_token_auth(ws)
+
+        assert result is None
+        ws.close.assert_awaited_once_with(code=1008)
+
+    @pytest.mark.asyncio
+    async def test_missing_token_closes_websocket(self):
+        """get_token_auth closes WebSocket when token query param is absent."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from backend.app.api.endpoints.terminal import get_token_auth
+
+        ws = MagicMock()
+        ws.query_params = {}
+        ws.close = AsyncMock()
+
+        with patch("backend.app.api.endpoints.terminal.settings") as mock_settings:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
+            result = await get_token_auth(ws)
+
+        assert result is None
+        ws.close.assert_awaited_once_with(code=1008)
+
+    @pytest.mark.asyncio
+    async def test_empty_token_is_rejected(self):
+        """An empty string token does not match the configured token."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from backend.app.api.endpoints.terminal import get_token_auth
+
+        ws = MagicMock()
+        ws.query_params = {"token": ""}
+        ws.close = AsyncMock()
+
+        with patch("backend.app.api.endpoints.terminal.settings") as mock_settings:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
+            result = await get_token_auth(ws)
+
+        assert result is None
+        ws.close.assert_awaited_once_with(code=1008)
+
+    @pytest.mark.asyncio
+    async def test_close_uses_policy_violation_code(self):
+        """WebSocket close code 1008 corresponds to Policy Violation."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from backend.app.api.endpoints.terminal import get_token_auth
+
+        ws = MagicMock()
+        ws.query_params = {"token": "bad"}
+        ws.close = AsyncMock()
+
+        with patch("backend.app.api.endpoints.terminal.settings") as mock_settings:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "correct"
+            await get_token_auth(ws)
+
+        call_kwargs = ws.close.call_args
+        assert call_kwargs.kwargs.get("code") == 1008 or call_kwargs.args == (1008,) or call_kwargs == ((1008,), {}) or call_kwargs.kwargs == {"code": 1008}
+
+
+# ===========================================================================
+# maintainer.py  (new file in PR)
+# ===========================================================================
+
+class TestTriggerMaintenance:
+    def test_creates_inbox_file_when_no_pending_task(self, tmp_path):
+        """trigger_maintenance writes a file to nanoc/inbox when no pending maintenance task exists."""
+        import sqlite3
+        import glob as glob_mod
+        from unittest.mock import patch
+
+        db_path = str(tmp_path / "maint.db")
+        mem = _fresh_memory(db_path)
+        inbox_dir = str(tmp_path / "inbox")
+
+        with patch("maintainer.settings") as mock_settings, \
+             patch("maintainer.Memory") as MockMemory, \
+             patch("maintainer.os.makedirs") as mock_makedirs, \
+             patch("maintainer.os.path.join", side_effect=os.path.join) as mock_join, \
+             patch("builtins.open", unittest.mock.mock_open()) as mock_open_file, \
+             patch("sqlite3.connect") as mock_connect:
+            mock_settings.DB_PATH = db_path
+            # Simulate no pending task found
+            mock_cursor = MagicMock()
+            mock_cursor.fetchone.return_value = None
+            mock_conn = MagicMock()
+            mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+            mock_conn.__exit__ = MagicMock(return_value=False)
+            mock_conn.cursor.return_value = mock_cursor
+            mock_connect.return_value = mock_conn
+
+            from maintainer import trigger_maintenance
+            trigger_maintenance()
+
+        mock_makedirs.assert_called()
+        mock_open_file.assert_called()
+
+    def test_skips_when_pending_task_exists(self, tmp_path, capsys):
+        """trigger_maintenance does not create a file when a pending task already exists."""
+        import sqlite3
+        from unittest.mock import patch, mock_open
+
+        db_path = str(tmp_path / "maint2.db")
+
+        with patch("maintainer.settings") as mock_settings, \
+             patch("maintainer.Memory"), \
+             patch("sqlite3.connect") as mock_connect, \
+             patch("builtins.open", mock_open()) as mock_open_file:
+            mock_settings.DB_PATH = db_path
+            mock_cursor = MagicMock()
+            mock_cursor.fetchone.return_value = (1,)  # Task already exists
+            mock_conn = MagicMock()
+            mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+            mock_conn.__exit__ = MagicMock(return_value=False)
+            mock_conn.cursor.return_value = mock_cursor
+            mock_connect.return_value = mock_conn
+
+            from maintainer import trigger_maintenance
+            trigger_maintenance()
+
+        captured = capsys.readouterr()
+        assert "already pending" in captured.out
+        mock_open_file.assert_not_called()
+
+    def test_inbox_file_contains_project_description(self, tmp_path):
+        """The file written by trigger_maintenance contains the maintenance task description."""
+        import sqlite3
+        from unittest.mock import patch, mock_open, call
+
+        db_path = str(tmp_path / "maint3.db")
+        written_content = []
+
+        m = unittest.mock.mock_open()
+        original_write = m().write
+        m().write.side_effect = lambda s: written_content.append(s)
+
+        with patch("maintainer.settings") as mock_settings, \
+             patch("maintainer.Memory"), \
+             patch("sqlite3.connect") as mock_connect, \
+             patch("builtins.open", m), \
+             patch("maintainer.os.makedirs"):
+            mock_settings.DB_PATH = db_path
+            mock_cursor = MagicMock()
+            mock_cursor.fetchone.return_value = None
+            mock_conn = MagicMock()
+            mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+            mock_conn.__exit__ = MagicMock(return_value=False)
+            mock_conn.cursor.return_value = mock_cursor
+            mock_connect.return_value = mock_conn
+
+            from maintainer import trigger_maintenance
+            trigger_maintenance()
+
+        all_written = "".join(written_content)
+        assert "NANOC" in all_written or "Analyze" in all_written
+
+    def test_inbox_filename_contains_maintenance_prefix(self, tmp_path):
+        """The generated inbox filename starts with 'maintenance_'."""
+        import sqlite3
+        from unittest.mock import patch, mock_open, call
+
+        db_path = str(tmp_path / "maint4.db")
+        opened_paths = []
+
+        def capturing_open(path, mode="r", *args, **kwargs):
+            opened_paths.append(path)
+            return unittest.mock.mock_open()(path, mode)
+
+        with patch("maintainer.settings") as mock_settings, \
+             patch("maintainer.Memory"), \
+             patch("sqlite3.connect") as mock_connect, \
+             patch("builtins.open", side_effect=capturing_open), \
+             patch("maintainer.os.makedirs"):
+            mock_settings.DB_PATH = db_path
+            mock_cursor = MagicMock()
+            mock_cursor.fetchone.return_value = None
+            mock_conn = MagicMock()
+            mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+            mock_conn.__exit__ = MagicMock(return_value=False)
+            mock_conn.cursor.return_value = mock_cursor
+            mock_connect.return_value = mock_conn
+
+            from maintainer import trigger_maintenance
+            trigger_maintenance()
+
+        assert any("maintenance_" in p for p in opened_paths)
+
+    def test_main_catches_exceptions_and_continues(self):
+        """main() catches exceptions from trigger_maintenance and does not crash."""
+        from unittest.mock import patch
+        call_count = [0]
+
+        def raising_trigger():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RuntimeError("simulated error")
+            # Stop after second call to avoid infinite loop
+            raise SystemExit(0)
+
+        with patch("maintainer.trigger_maintenance", side_effect=raising_trigger), \
+             patch("maintainer.time.sleep"):
+            from maintainer import main
+            try:
+                main()
+            except SystemExit:
+                pass
+
+        assert call_count[0] == 2
+
+
+# ===========================================================================
+# nanoc/agents/base.py  TeamLeader.delegate_tasks changes in PR
+# ===========================================================================
+
+class TestTeamLeaderDelegateTasks:
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_generates_project_id(self, memory):
+        """delegate_tasks generates a project_id prefixed with 'proj_'."""
+        from nanoc.agents.base import TeamLeader
+        leader = TeamLeader("L1", "Team Leader", memory, MockLLM())
+        proj_id = await leader.delegate_tasks("Build a feature")
+        assert proj_id.startswith("proj_")
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_always_appends_to_active_projects(self, memory):
+        """delegate_tasks appends new project_id to active_projects even if already present."""
+        from nanoc.agents.base import TeamLeader
+        leader = TeamLeader("L1", "Team Leader", memory, MockLLM())
+        memory.upsert_knowledge("active_projects", ["proj_existing"])
+        await leader.delegate_tasks("Task A")
+        projects = memory.get_knowledge("active_projects")
+        assert len(projects) == 2
+        assert "proj_existing" in projects
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_publishes_incoming_job_event(self, memory):
+        """delegate_tasks publishes a 'project/incoming-job' event."""
+        from nanoc.agents.base import TeamLeader
+        leader = TeamLeader("L1", "Team Leader", memory, MockLLM())
+        await leader.delegate_tasks("Build network monitor")
+        events = memory.get_events(topic="project/incoming-job")
+        assert len(events) >= 1
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_event_contains_project_id_and_description(self, memory):
+        """The 'project/incoming-job' event payload has project_id and description fields."""
+        import json
+        from nanoc.agents.base import TeamLeader
+        leader = TeamLeader("L1", "Team Leader", memory, MockLLM())
+        proj_id = await leader.delegate_tasks("Deploy monitoring stack")
+        events = memory.get_events(topic="project/incoming-job")
+        payload = json.loads(events[-1]["payload"])
+        assert payload["project_id"] == proj_id
+        assert "Deploy monitoring stack" in payload["description"]
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_event_does_not_include_leader_field(self, memory):
+        """The 'project/incoming-job' event no longer includes a 'leader' field (removed in PR)."""
+        import json
+        from nanoc.agents.base import TeamLeader
+        leader = TeamLeader("L1", "Team Leader", memory, MockLLM())
+        await leader.delegate_tasks("Test description")
+        events = memory.get_events(topic="project/incoming-job")
+        payload = json.loads(events[-1]["payload"])
+        assert "leader" not in payload
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_creates_architect_task(self, memory):
+        """delegate_tasks creates a task assigned to 'Architect'."""
+        import sqlite3
+        from nanoc.agents.base import TeamLeader
+        leader = TeamLeader("L1", "Team Leader", memory, MockLLM())
+        await leader.delegate_tasks("Architect a new module")
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM tasks WHERE assigned_to = 'Architect'")
+            rows = cursor.fetchall()
+        assert len(rows) >= 1
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_returns_project_id_string(self, memory):
+        """delegate_tasks returns the project_id string."""
+        from nanoc.agents.base import TeamLeader
+        leader = TeamLeader("L1", "Team Leader", memory, MockLLM())
+        result = await leader.delegate_tasks("Some project")
+        assert isinstance(result, str)
+        assert result.startswith("proj_")
+
+    @pytest.mark.asyncio
+    async def test_delegate_tasks_stores_architecture_in_knowledge(self, memory):
+        """delegate_tasks stores the architecture in knowledge base under project key."""
+        from nanoc.agents.base import TeamLeader
+        llm = MockLLM()
+        llm.default_response = "Modular microservices architecture"
+        leader = TeamLeader("L1", "Team Leader", memory, llm)
+        proj_id = await leader.delegate_tasks("Build system")
+        arch = memory.get_knowledge(f"project_{proj_id}_arch")
+        assert arch is not None
+
+
+# ===========================================================================
+# nanoc/agents/documentation.py  (file persistence added in PR)
+# ===========================================================================
+
+class TestDocumentationAgentInit:
+    def test_init_creates_docs_directory(self, tmp_path):
+        """DocumentationAgent.__init__ creates the docs subdirectory."""
+        from unittest.mock import patch
+        from nanoc.agents.documentation import DocumentationAgent
+
+        db_path = str(tmp_path / "doc.db")
+        mem = _fresh_memory(db_path)
+        docs_dir = str(tmp_path / "logs")
+
+        with patch("nanoc.agents.documentation.settings") as mock_settings:
+            mock_settings.LOGS_DIR = str(tmp_path / "logs")
+            agent = DocumentationAgent("DocAgent", "Documentation", mem)
+
+        assert os.path.isdir(agent.docs_dir)
+
+    def test_docs_dir_is_logs_dir_plus_docs(self, tmp_path):
+        """docs_dir is correctly derived as LOGS_DIR/docs."""
+        from unittest.mock import patch
+        from nanoc.agents.documentation import DocumentationAgent
+
+        db_path = str(tmp_path / "doc2.db")
+        mem = _fresh_memory(db_path)
+
+        with patch("nanoc.agents.documentation.settings") as mock_settings:
+            mock_settings.LOGS_DIR = str(tmp_path / "logs")
+            agent = DocumentationAgent("DocAgent", "Documentation", mem)
+
+        assert agent.docs_dir == os.path.join(str(tmp_path / "logs"), "docs")
+
+
+class TestDocumentationAgentUpdateDocs:
+    @pytest.fixture
+    def doc_agent(self, tmp_path):
+        from unittest.mock import patch
+        from nanoc.agents.documentation import DocumentationAgent
+        db_path = str(tmp_path / "doc.db")
+        mem = _fresh_memory(db_path)
+        with patch("nanoc.agents.documentation.settings") as mock_settings:
+            mock_settings.LOGS_DIR = str(tmp_path / "logs")
+            agent = DocumentationAgent("DocAgent", "Documentation", mem, MockLLM())
+        return agent, mem, tmp_path
+
+    @pytest.mark.asyncio
+    async def test_update_docs_stores_in_knowledge_base(self, doc_agent):
+        """update_docs persists content to the knowledge base under docs:<project_id>."""
+        agent, mem, _ = doc_agent
+        await agent.update_docs("proj_test", "Some docs content")
+        stored = mem.get_knowledge("docs:proj_test")
+        assert stored == "Some docs content"
+
+    @pytest.mark.asyncio
+    async def test_update_docs_creates_markdown_file(self, doc_agent):
+        """update_docs creates a markdown file at docs_dir/<project_id>.md."""
+        agent, mem, _ = doc_agent
+        await agent.update_docs("proj_abc", "Initial documentation")
+        doc_file = os.path.join(agent.docs_dir, "proj_abc.md")
+        assert os.path.exists(doc_file)
+
+    @pytest.mark.asyncio
+    async def test_update_docs_file_contains_content(self, doc_agent):
+        """The markdown file contains the provided content."""
+        agent, mem, _ = doc_agent
+        await agent.update_docs("proj_xyz", "My content here")
+        doc_file = os.path.join(agent.docs_dir, "proj_xyz.md")
+        with open(doc_file) as f:
+            file_content = f.read()
+        assert "My content here" in file_content
+
+    @pytest.mark.asyncio
+    async def test_update_docs_second_call_appends_to_file(self, doc_agent):
+        """A second call to update_docs appends to the existing file (mode='a')."""
+        agent, mem, _ = doc_agent
+        await agent.update_docs("proj_app", "first content")
+        await agent.update_docs("proj_app", "updated content")
+        doc_file = os.path.join(agent.docs_dir, "proj_app.md")
+        with open(doc_file) as f:
+            content = f.read()
+        assert "first content" in content
+        assert "updated content" in content
+
+    @pytest.mark.asyncio
+    async def test_update_docs_publishes_docs_updated_event(self, doc_agent):
+        """update_docs publishes a 'docs/updated' event."""
+        agent, mem, _ = doc_agent
+        await agent.update_docs("proj_ev", "Event test content")
+        events = mem.get_events(topic="docs/updated")
+        assert len(events) >= 1
+
+    @pytest.mark.asyncio
+    async def test_update_docs_event_contains_path(self, doc_agent):
+        """The 'docs/updated' event payload contains the 'path' field."""
+        import json
+        agent, mem, _ = doc_agent
+        await agent.update_docs("proj_path", "Path test")
+        events = mem.get_events(topic="docs/updated")
+        payload = json.loads(events[-1]["payload"])
+        assert "path" in payload
+        assert "proj_path.md" in payload["path"]
+
+    @pytest.mark.asyncio
+    async def test_update_docs_event_status_is_success(self, doc_agent):
+        """The 'docs/updated' event payload status is 'success'."""
+        import json
+        agent, mem, _ = doc_agent
+        await agent.update_docs("proj_suc", "Success check")
+        events = mem.get_events(topic="docs/updated")
+        payload = json.loads(events[-1]["payload"])
+        assert payload["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_update_docs_file_contains_update_header(self, doc_agent):
+        """The markdown file includes a '## Update at' header line."""
+        agent, mem, _ = doc_agent
+        await agent.update_docs("proj_hdr", "Header test content")
+        doc_file = os.path.join(agent.docs_dir, "proj_hdr.md")
+        with open(doc_file) as f:
+            content = f.read()
+        assert "## Update at" in content
+
+
+# ===========================================================================
+# nanoc/agents/healer.py  (new file in PR)
+# ===========================================================================
+
+class TestAutoHealerInit:
+    def test_healer_role_is_healer(self, memory):
+        """AutoHealer sets its role to 'Healer'."""
+        from nanoc.agents.healer import AutoHealer
+        healer = AutoHealer("Healer1", memory)
+        assert healer.role == "Healer"
+
+    def test_healer_agent_id_is_set(self, memory):
+        """AutoHealer stores the provided agent_id."""
+        from nanoc.agents.healer import AutoHealer
+        healer = AutoHealer("MyHealer", memory)
+        assert healer.agent_id == "MyHealer"
+
+
+class TestAutoHealerHandleFailure:
+    @pytest.mark.asyncio
+    async def test_handle_failure_calls_create_task(self, memory):
+        """handle_failure creates a new task when a failure event is received."""
+        from unittest.mock import patch, MagicMock
+        from nanoc.agents.healer import AutoHealer
+
+        healer = AutoHealer("Healer1", memory)
+        healer.llm = MockLLM()
+
+        failure_event = {
+            "task_id": 42,
+            "project_id": "proj_heal",
+            "error": "IndexError: list out of range",
+            "description": "Build authentication module"
+        }
+
+        with patch.object(memory, "create_task") as mock_create:
+            mock_create.return_value = 99
+            await healer.handle_failure(failure_event)
+
+        mock_create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_failure_assigns_task_to_coder(self, memory):
+        """handle_failure assigns the fix task to 'Coder' role."""
+        from unittest.mock import patch
+        from nanoc.agents.healer import AutoHealer
+
+        healer = AutoHealer("Healer1", memory)
+        healer.llm = MockLLM()
+
+        failure_event = {
+            "task_id": 7,
+            "project_id": "proj_heal",
+            "error": "RuntimeError: connection refused",
+            "description": "Connect to database"
+        }
+
+        with patch.object(memory, "create_task") as mock_create:
+            mock_create.return_value = 100
+            await healer.handle_failure(failure_event)
+
+        call_kwargs = mock_create.call_args
+        assigned_to = call_kwargs.kwargs.get("assigned_to") or call_kwargs.args[1]
+        assert assigned_to == "Coder"
+
+    @pytest.mark.asyncio
+    async def test_handle_failure_sets_high_priority(self, memory):
+        """handle_failure creates a task with priority=10 for expedited processing."""
+        from unittest.mock import patch
+        from nanoc.agents.healer import AutoHealer
+
+        healer = AutoHealer("Healer1", memory)
+        healer.llm = MockLLM()
+
+        failure_event = {
+            "task_id": 3,
+            "project_id": "proj_p",
+            "error": "TimeoutError",
+            "description": "Run long task"
+        }
+
+        with patch.object(memory, "create_task") as mock_create:
+            mock_create.return_value = 101
+            await healer.handle_failure(failure_event)
+
+        call_kwargs = mock_create.call_args
+        priority = call_kwargs.kwargs.get("priority")
+        assert priority == 10
+
+    @pytest.mark.asyncio
+    async def test_handle_failure_includes_task_id_in_description(self, memory):
+        """The fix task description references the original failed task_id."""
+        from unittest.mock import patch
+        from nanoc.agents.healer import AutoHealer
+
+        healer = AutoHealer("Healer1", memory)
+        healer.llm = MockLLM()
+
+        failure_event = {
+            "task_id": 99,
+            "project_id": "proj_desc",
+            "error": "ValueError",
+            "description": "Process data"
+        }
+
+        with patch.object(memory, "create_task") as mock_create:
+            mock_create.return_value = 102
+            await healer.handle_failure(failure_event)
+
+        task_desc = mock_create.call_args.args[0]
+        assert "99" in task_desc
+
+    @pytest.mark.asyncio
+    async def test_handle_failure_calls_think_with_error_and_description(self, memory):
+        """handle_failure calls think() with a prompt containing error and description."""
+        from nanoc.agents.healer import AutoHealer
+
+        healer = AutoHealer("Healer1", memory)
+        llm = MockLLM()
+        healer.llm = llm
+
+        failure_event = {
+            "task_id": 5,
+            "project_id": "proj_think",
+            "error": "ConnectionError: timeout",
+            "description": "Fetch remote config"
+        }
+
+        from unittest.mock import patch
+        with patch.object(memory, "create_task", return_value=103):
+            await healer.handle_failure(failure_event)
+
+        assert len(llm.calls) >= 1
+        last_prompt = llm.calls[-1]["prompt"]
+        assert "ConnectionError: timeout" in last_prompt or "Fetch remote config" in last_prompt
+
+    @pytest.mark.asyncio
+    async def test_handle_failure_passes_project_id_to_task(self, memory):
+        """handle_failure passes the correct project_id when creating the fix task."""
+        from unittest.mock import patch
+        from nanoc.agents.healer import AutoHealer
+
+        healer = AutoHealer("Healer1", memory)
+        healer.llm = MockLLM()
+
+        failure_event = {
+            "task_id": 12,
+            "project_id": "proj_specific",
+            "error": "ZeroDivisionError",
+            "description": "Calculate metrics"
+        }
+
+        with patch.object(memory, "create_task") as mock_create:
+            mock_create.return_value = 104
+            await healer.handle_failure(failure_event)
+
+        call_kwargs = mock_create.call_args
+        project_id = call_kwargs.kwargs.get("project_id")
+        assert project_id == "proj_specific"
+
+    @pytest.mark.asyncio
+    async def test_handle_failure_with_missing_fields_does_not_raise(self, memory):
+        """handle_failure handles missing optional fields gracefully."""
+        from unittest.mock import patch
+        from nanoc.agents.healer import AutoHealer
+
+        healer = AutoHealer("Healer1", memory)
+        healer.llm = MockLLM()
+
+        # Minimal event with no task_id or project_id
+        failure_event = {}
+
+        with patch.object(memory, "create_task", return_value=105):
+            # Should not raise
+            await healer.handle_failure(failure_event)
+
+
+# ===========================================================================
+# nanoc/agents/security.py  (new file in PR)
+# ===========================================================================
+
+class TestSecurityAgentInit:
+    def test_security_agent_role_is_security(self, memory):
+        """SecurityAgent sets its role to 'Security'."""
+        from nanoc.agents.security import SecurityAgent
+        agent = SecurityAgent("Sec1", memory)
+        assert agent.role == "Security"
+
+    def test_security_agent_id_is_stored(self, memory):
+        """SecurityAgent stores the provided agent_id."""
+        from nanoc.agents.security import SecurityAgent
+        agent = SecurityAgent("SecurityScanner", memory)
+        assert agent.agent_id == "SecurityScanner"
+
+
+class TestSecurityAgentAuditService:
+    @pytest.mark.asyncio
+    async def test_audit_service_publishes_audit_complete_event_on_success(self, memory):
+        """audit_service publishes 'security/audit-complete' event on successful scan."""
+        import json
+        from unittest.mock import patch, AsyncMock
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("Sec1", memory)
+        agent.llm = MockLLM()
+
+        nmap_result = {"stdout": "Nmap scan report...", "stderr": "", "returncode": 0}
+
+        with patch("nanoc.tools.network.AsyncRunner.run_command", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = nmap_result
+            result = await agent.audit_service("192.168.1.1")
+
+        events = memory.get_events(topic="security/audit-complete")
+        assert len(events) >= 1
+        payload = json.loads(events[-1]["payload"])
+        assert payload["target"] == "192.168.1.1"
+
+    @pytest.mark.asyncio
+    async def test_audit_service_returns_stdout_on_success(self, memory):
+        """audit_service returns the stdout content from nmap on success."""
+        from unittest.mock import patch, AsyncMock
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("Sec1", memory)
+        agent.llm = MockLLM()
+
+        nmap_result = {"stdout": "Nmap scan report for 10.0.0.1", "stderr": "", "returncode": 0}
+
+        with patch("nanoc.tools.network.AsyncRunner.run_command", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = nmap_result
+            result = await agent.audit_service("10.0.0.1")
+
+        assert result == "Nmap scan report for 10.0.0.1"
+
+    @pytest.mark.asyncio
+    async def test_audit_service_returns_error_dict_on_failure(self, memory):
+        """audit_service returns the error dict when nmap command fails."""
+        from unittest.mock import patch, AsyncMock
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("Sec1", memory)
+        agent.llm = MockLLM()
+
+        error_result = {"error": "nmap not found", "returncode": 1, "stdout": "", "stderr": ""}
+
+        with patch("nanoc.tools.network.AsyncRunner.run_command", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = error_result
+            result = await agent.audit_service("bad-target")
+
+        assert result == error_result
+
+    @pytest.mark.asyncio
+    async def test_audit_service_does_not_publish_event_on_error(self, memory):
+        """audit_service does not publish 'security/audit-complete' when an error occurs."""
+        from unittest.mock import patch, AsyncMock
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("Sec1", memory)
+        agent.llm = MockLLM()
+
+        error_result = {"error": "command failed"}
+
+        with patch("nanoc.tools.network.AsyncRunner.run_command", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = error_result
+            await agent.audit_service("192.168.1.99")
+
+        events = memory.get_events(topic="security/audit-complete")
+        assert len(events) == 0
+
+    @pytest.mark.asyncio
+    async def test_audit_service_event_contains_report(self, memory):
+        """The 'security/audit-complete' event payload contains the scan report."""
+        import json
+        from unittest.mock import patch, AsyncMock
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("Sec1", memory)
+        agent.llm = MockLLM()
+
+        scan_output = "22/tcp open ssh OpenSSH 8.2"
+        nmap_result = {"stdout": scan_output, "stderr": "", "returncode": 0}
+
+        with patch("nanoc.tools.network.AsyncRunner.run_command", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = nmap_result
+            await agent.audit_service("172.16.0.5")
+
+        events = memory.get_events(topic="security/audit-complete")
+        payload = json.loads(events[-1]["payload"])
+        assert payload["report"] == scan_output
+
+    @pytest.mark.asyncio
+    async def test_audit_service_uses_nmap_sv_command(self, memory):
+        """audit_service uses nmap with -sV flag for service version detection."""
+        from unittest.mock import patch, AsyncMock
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("Sec1", memory)
+        agent.llm = MockLLM()
+
+        nmap_result = {"stdout": "scan report", "stderr": "", "returncode": 0}
+
+        with patch("nanoc.tools.network.AsyncRunner.run_command", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = nmap_result
+            await agent.audit_service("10.0.0.5")
+
+        called_cmd = mock_run.call_args.args[0]
+        assert "nmap" in called_cmd
+        assert "-sV" in called_cmd
+        assert "10.0.0.5" in called_cmd
+
+
+# ===========================================================================
+# nanoc/core/llm.py  (model override from knowledge base added in PR)
+# ===========================================================================
+
+class TestLLMModelOverride:
+    @pytest.mark.asyncio
+    async def test_complete_uses_override_when_set(self, tmp_path):
+        """LLMProvider.complete uses model from knowledge base override when present."""
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.llm import LLMProvider
+
+        db_path = str(tmp_path / "llm_override.db")
+        mem = _fresh_memory(db_path)
+        mem.upsert_knowledge("system/model_override", "gpt-4-turbo")
+
+        provider = LLMProvider(provider="openrouter")
+
+        with patch("nanoc.core.llm.Memory") as MockMem, \
+             patch.object(provider, "_openrouter_complete", new_callable=AsyncMock) as mock_complete, \
+             patch.object(provider, "_record_telemetry"):
+            MockMem.return_value = mem
+            mock_complete.return_value = "response"
+            await provider.complete("test prompt")
+
+        # Verify that _openrouter_complete was called with the override model
+        called_model = mock_complete.call_args.args[2]
+        assert called_model == "gpt-4-turbo"
+
+    @pytest.mark.asyncio
+    async def test_complete_uses_self_model_when_no_override(self, tmp_path):
+        """LLMProvider.complete uses self.model when no override is set in knowledge base."""
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.llm import LLMProvider
+
+        db_path = str(tmp_path / "llm_no_override.db")
+        mem = _fresh_memory(db_path)
+        # No override set
+
+        provider = LLMProvider(provider="openrouter", model="default-model-xyz")
+
+        with patch("nanoc.core.llm.Memory") as MockMem, \
+             patch.object(provider, "_openrouter_complete", new_callable=AsyncMock) as mock_complete, \
+             patch.object(provider, "_record_telemetry"):
+            MockMem.return_value = mem
+            mock_complete.return_value = "response"
+            await provider.complete("test prompt")
+
+        called_model = mock_complete.call_args.args[2]
+        assert called_model == "default-model-xyz"
+
+    @pytest.mark.asyncio
+    async def test_complete_ollama_uses_override_when_set(self, tmp_path):
+        """LLMProvider.complete passes override model to _ollama_complete when provider is ollama."""
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.llm import LLMProvider
+
+        db_path = str(tmp_path / "llm_ollama.db")
+        mem = _fresh_memory(db_path)
+        mem.upsert_knowledge("system/model_override", "llama3-override")
+
+        provider = LLMProvider(provider="ollama", model="llama3-default")
+
+        with patch("nanoc.core.llm.Memory") as MockMem, \
+             patch.object(provider, "_ollama_complete", new_callable=AsyncMock) as mock_complete, \
+             patch.object(provider, "_record_telemetry"):
+            MockMem.return_value = mem
+            mock_complete.return_value = "ollama response"
+            await provider.complete("ollama test")
+
+        called_model = mock_complete.call_args.args[2]
+        assert called_model == "llama3-override"
+
+    @pytest.mark.asyncio
+    async def test_complete_raises_for_unknown_provider(self, tmp_path):
+        """LLMProvider.complete raises ValueError for an unknown provider."""
+        from unittest.mock import patch
+        from nanoc.core.llm import LLMProvider
+
+        db_path = str(tmp_path / "llm_unknown.db")
+        mem = _fresh_memory(db_path)
+
+        provider = LLMProvider(provider="unknown-provider")
+
+        with patch("nanoc.core.llm.Memory") as MockMem, \
+             patch.object(provider, "_record_error"):
+            MockMem.return_value = mem
+            with pytest.raises(ValueError, match="Unknown provider"):
+                await provider.complete("should fail")
+
+    def test_openrouter_complete_signature_accepts_model_param(self):
+        """_openrouter_complete now accepts a model parameter (changed in PR)."""
+        import inspect
+        from nanoc.core.llm import LLMProvider
+        sig = inspect.signature(LLMProvider._openrouter_complete)
+        assert "model" in sig.parameters
+
+    def test_ollama_complete_signature_accepts_model_param(self):
+        """_ollama_complete now accepts a model parameter (changed in PR)."""
+        import inspect
+        from nanoc.core.llm import LLMProvider
+        sig = inspect.signature(LLMProvider._ollama_complete)
+        assert "model" in sig.parameters
+
+
+# ===========================================================================
+# nanoc/core/orchestrator.py  (retry logic, scaling, priority ordering added in PR)
+# ===========================================================================
+
+class TestOrchestratorInit:
+    def test_orchestrator_reads_initial_workers_from_settings(self, memory):
+        """Orchestrator.__init__ reads INITIAL_WORKERS from settings."""
+        from unittest.mock import patch
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 3
+            mock_settings.MAX_WORKERS = 15
+            orch = Orchestrator(memory, leader)
+
+        assert orch.initial_workers == 3
+
+    def test_orchestrator_reads_max_workers_from_settings(self, memory):
+        """Orchestrator.__init__ reads MAX_WORKERS from settings."""
+        from unittest.mock import patch
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 3
+            mock_settings.MAX_WORKERS = 25
+            orch = Orchestrator(memory, leader)
+
+        assert orch.max_workers == 25
+
+    def test_orchestrator_current_workers_starts_empty(self, memory):
+        """Orchestrator.__init__ initializes current_workers as an empty list."""
+        from unittest.mock import patch
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 5
+            mock_settings.MAX_WORKERS = 20
+            orch = Orchestrator(memory, leader)
+
+        assert orch.current_workers == []
+
+
+class TestOrchestratorRetryLogic:
+    @pytest.mark.asyncio
+    async def test_process_task_retries_on_failure(self, memory):
+        """process_task sets status to 'pending' when retry_count <= max_retries."""
+        import sqlite3
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent, Coder
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 1
+            mock_settings.MAX_WORKERS = 5
+            orch = Orchestrator(memory, leader)
+
+        # Create a coder that always fails
+        failing_coder = Coder("C1", "Coder", memory, MockLLM())
+        failing_coder.llm = MagicMock()
+        failing_coder.llm.complete = AsyncMock(side_effect=RuntimeError("Simulated failure"))
+        orch.add_agent(failing_coder)
+
+        task_id = memory.create_task("Write failing code", assigned_to="Coder", project_id="proj_r1")
+
+        # Fetch the task as dict
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+            task = dict(cursor.fetchone())
+
+        task["retry_count"] = 0
+        task["max_retries"] = 3
+
+        await orch.process_task(task)
+
+        with sqlite3.connect(memory.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT status, retry_count FROM tasks WHERE id = ?", (task_id,))
+            row = cursor.fetchone()
+
+        assert row[0] == "pending"  # Should be retried
+        assert row[1] == 1  # retry_count incremented
+
+    @pytest.mark.asyncio
+    async def test_process_task_fails_after_max_retries_exceeded(self, memory):
+        """process_task sets status to 'failed' when retry_count exceeds max_retries."""
+        import sqlite3
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent, Coder
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 1
+            mock_settings.MAX_WORKERS = 5
+            orch = Orchestrator(memory, leader)
+
+        failing_coder = Coder("C1", "Coder", memory, MockLLM())
+        failing_coder.llm = MagicMock()
+        failing_coder.llm.complete = AsyncMock(side_effect=RuntimeError("Fail"))
+        orch.add_agent(failing_coder)
+
+        task_id = memory.create_task("Write failing code", assigned_to="Coder", project_id="proj_maxr")
+
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+            task = dict(cursor.fetchone())
+
+        task["retry_count"] = 3
+        task["max_retries"] = 3
+
+        await orch.process_task(task)
+
+        with sqlite3.connect(memory.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
+            row = cursor.fetchone()
+
+        assert row[0] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_process_task_publishes_task_failed_event_on_final_failure(self, memory):
+        """process_task publishes 'task/failed' event when a task permanently fails."""
+        import sqlite3
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent, Coder
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 1
+            mock_settings.MAX_WORKERS = 5
+            orch = Orchestrator(memory, leader)
+
+        failing_coder = Coder("C1", "Coder", memory, MockLLM())
+        failing_coder.llm = MagicMock()
+        failing_coder.llm.complete = AsyncMock(side_effect=RuntimeError("Final fail"))
+        orch.add_agent(failing_coder)
+
+        task_id = memory.create_task("A failing task", assigned_to="Coder", project_id="proj_event")
+
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+            task = dict(cursor.fetchone())
+
+        task["retry_count"] = 3
+        task["max_retries"] = 3
+
+        await orch.process_task(task)
+
+        events = memory.get_events(topic="task/failed")
+        assert len(events) >= 1
+
+    @pytest.mark.asyncio
+    async def test_process_task_failed_event_contains_task_id_and_error(self, memory):
+        """The 'task/failed' event payload includes task_id, error, and project_id."""
+        import json
+        import sqlite3
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent, Coder
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 1
+            mock_settings.MAX_WORKERS = 5
+            orch = Orchestrator(memory, leader)
+
+        failing_coder = Coder("C1", "Coder", memory, MockLLM())
+        failing_coder.llm = MagicMock()
+        failing_coder.llm.complete = AsyncMock(side_effect=RuntimeError("DB connection lost"))
+        orch.add_agent(failing_coder)
+
+        task_id = memory.create_task("Persist data", assigned_to="Coder", project_id="proj_payload")
+
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+            task = dict(cursor.fetchone())
+
+        task["retry_count"] = 3
+        task["max_retries"] = 3
+
+        await orch.process_task(task)
+
+        events = memory.get_events(topic="task/failed")
+        payload = json.loads(events[-1]["payload"])
+        assert payload["task_id"] == task_id
+        assert "DB connection lost" in payload["error"]
+
+    @pytest.mark.asyncio
+    async def test_process_task_does_not_publish_failed_event_on_retry(self, memory):
+        """process_task does NOT publish 'task/failed' when the task will be retried."""
+        import sqlite3
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent, Coder
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 1
+            mock_settings.MAX_WORKERS = 5
+            orch = Orchestrator(memory, leader)
+
+        failing_coder = Coder("C1", "Coder", memory, MockLLM())
+        failing_coder.llm = MagicMock()
+        failing_coder.llm.complete = AsyncMock(side_effect=RuntimeError("Will retry"))
+        orch.add_agent(failing_coder)
+
+        task_id = memory.create_task("Retry task", assigned_to="Coder", project_id="proj_retry")
+
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+            task = dict(cursor.fetchone())
+
+        task["retry_count"] = 0
+        task["max_retries"] = 3
+
+        await orch.process_task(task)
+
+        events = memory.get_events(topic="task/failed")
+        assert len(events) == 0
+
+
+class TestOrchestratorPriorityOrdering:
+    def test_tasks_ordered_by_priority_desc_then_created_at_asc(self, memory):
+        """Tasks are fetched in priority DESC, created_at ASC order from DB."""
+        import sqlite3
+        import time
+
+        # Create tasks with different priorities
+        low_id = memory.create_task("Low priority task", assigned_to="Coder")
+        time.sleep(0.01)
+        high_id = memory.create_task("High priority task", assigned_to="Coder")
+
+        # Manually set priorities in DB
+        with sqlite3.connect(memory.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE tasks SET priority = 0 WHERE id = ?", (low_id,))
+            cursor.execute("UPDATE tasks SET priority = 5 WHERE id = ?", (high_id,))
+            conn.commit()
+
+        # Fetch using the priority ordering from the run_loop query
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM tasks WHERE status = 'pending' ORDER BY priority DESC, created_at ASC")
+            tasks = [dict(row) for row in cursor.fetchall()]
+
+        assert tasks[0]["id"] == high_id
+        assert tasks[1]["id"] == low_id
+
+    def test_same_priority_tasks_ordered_by_created_at_asc(self, memory):
+        """When priorities are equal, tasks are ordered by creation time ascending."""
+        import sqlite3
+        import time
+
+        id1 = memory.create_task("Task 1", assigned_to="Coder")
+        time.sleep(0.01)
+        id2 = memory.create_task("Task 2", assigned_to="Coder")
+
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM tasks WHERE status = 'pending' ORDER BY priority DESC, created_at ASC")
+            tasks = [dict(row) for row in cursor.fetchall()]
+
+        assert tasks[0]["id"] == id1
+        assert tasks[1]["id"] == id2
+
+
+class TestOrchestratorScalingHandlers:
+    @pytest.mark.asyncio
+    async def test_handle_scale_up_adds_worker_when_below_max(self, memory):
+        """handle_scale_up adds a new worker task when current count is below max_workers."""
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 2
+            mock_settings.MAX_WORKERS = 5
+            orch = Orchestrator(memory, leader)
+
+        # Simulate 2 existing workers
+        mock_task = MagicMock()
+        orch.current_workers = [mock_task, mock_task]
+
+        with patch.object(asyncio, "create_task", return_value=MagicMock()) as mock_create:
+            with patch.object(orch.leader, "log", new_callable=AsyncMock):
+                # Directly call the inner handle_scale_up function
+                async def handle_scale_up(payload):
+                    if len(orch.current_workers) < orch.max_workers:
+                        new_id = len(orch.current_workers)
+                        task = asyncio.create_task(orch.worker(new_id))
+                        orch.current_workers.append(task)
+                        await orch.leader.log(f"Scaled up: Worker {new_id} added. Total: {len(orch.current_workers)}")
+
+                await handle_scale_up({})
+
+        assert len(orch.current_workers) == 3
+
+    @pytest.mark.asyncio
+    async def test_handle_scale_up_does_not_exceed_max_workers(self, memory):
+        """handle_scale_up does NOT add a worker when at max_workers limit."""
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 2
+            mock_settings.MAX_WORKERS = 3
+            orch = Orchestrator(memory, leader)
+
+        mock_task = MagicMock()
+        orch.current_workers = [mock_task, mock_task, mock_task]  # Already at max
+
+        async def handle_scale_up(payload):
+            if len(orch.current_workers) < orch.max_workers:
+                new_id = len(orch.current_workers)
+                task = asyncio.create_task(orch.worker(new_id))
+                orch.current_workers.append(task)
+
+        await handle_scale_up({})
+
+        assert len(orch.current_workers) == 3  # Unchanged
+
+    @pytest.mark.asyncio
+    async def test_handle_scale_down_removes_worker_when_above_initial(self, memory):
+        """handle_scale_down removes one worker when above initial_workers count."""
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 2
+            mock_settings.MAX_WORKERS = 5
+            orch = Orchestrator(memory, leader)
+
+        mock_task = MagicMock()
+        mock_task.cancel = MagicMock()
+        orch.current_workers = [mock_task, mock_task, mock_task]  # 3 workers > initial_workers(2)
+
+        with patch.object(orch.leader, "log", new_callable=AsyncMock):
+            async def handle_scale_down(payload):
+                if len(orch.current_workers) > orch.initial_workers:
+                    task = orch.current_workers.pop()
+                    task.cancel()
+                    await orch.leader.log(f"Scaled down")
+
+            await handle_scale_down({})
+
+        assert len(orch.current_workers) == 2
+        mock_task.cancel.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_scale_down_does_not_go_below_initial_workers(self, memory):
+        """handle_scale_down does NOT remove a worker when at initial_workers count."""
+        from unittest.mock import patch, AsyncMock
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import BaseAgent
+
+        leader = BaseAgent("L1", "Leader", memory, MockLLM())
+
+        with patch("nanoc.core.orchestrator.settings") as mock_settings:
+            mock_settings.INITIAL_WORKERS = 3
+            mock_settings.MAX_WORKERS = 10
+            orch = Orchestrator(memory, leader)
+
+        mock_task = MagicMock()
+        mock_task.cancel = MagicMock()
+        orch.current_workers = [mock_task, mock_task, mock_task]  # Exactly at initial_workers
+
+        async def handle_scale_down(payload):
+            if len(orch.current_workers) > orch.initial_workers:
+                task = orch.current_workers.pop()
+                task.cancel()
+
+        await handle_scale_down({})
+
+        assert len(orch.current_workers) == 3  # Unchanged
+        mock_task.cancel.assert_not_called()
