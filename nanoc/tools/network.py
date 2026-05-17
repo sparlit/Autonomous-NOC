@@ -104,7 +104,28 @@ class DiscoveryTool:
                     })
 
                     if ip != "127.0.0.1":
-                        edges.append({"from": "127.0.0.1", "to": ip, "label": "LAN"})
+                        trace = await DiagnosticTools.traceroute(ip)
+                        if "stdout" in trace:
+                            # Simple trace parsing to build hops
+                            hops = []
+                            for line in trace["stdout"].split("\n"):
+                                if any(char.isdigit() for char in line) and ("ms" in line or "*" in line):
+                                    parts = line.split()
+                                    for p in parts:
+                                        if "." in p and p.count(".") == 3:
+                                            hops.append(p.strip("()"))
+                                            break
+
+                            prev = "127.0.0.1"
+                            for hop in hops:
+                                if hop not in [n["id"] for n in nodes]:
+                                    nodes.append({"id": hop, "label": f"Hop-{hop}", "type": "router", "status": "online"})
+                                edges.append({"from": prev, "to": hop, "label": "hop"})
+                                prev = hop
+                            if prev != ip:
+                                edges.append({"from": prev, "to": ip, "label": "target"})
+                        else:
+                            edges.append({"from": "127.0.0.1", "to": ip, "label": "direct"})
         except Exception as e:
             # Fallback to simple parsing if XML fails
             print(f"XML parsing failed, using fallback: {e}")

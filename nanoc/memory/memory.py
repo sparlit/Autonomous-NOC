@@ -178,7 +178,15 @@ class Memory:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (description, assigned_to, 'pending', parent_id, project_id, priority, datetime.now(), datetime.now()))
             conn.commit()
-            return cursor.lastrowid
+            task_id = cursor.lastrowid
+            self.publish_event("task/created", {
+                "id": task_id,
+                "description": description,
+                "assigned_to": assigned_to,
+                "project_id": project_id,
+                "priority": priority
+            })
+            return task_id
 
     def update_task_status(self, task_id: int, status: str, result: Optional[str] = None, retry: bool = False):
         with sqlite3.connect(self.db_path) as conn:
@@ -202,4 +210,8 @@ class Memory:
                 (status, result, datetime.now(), task_id)
             )
             conn.commit()
+
+            if status == 'failed':
+                self.publish_event("task/failed", {"task_id": task_id, "error": result})
+
             return False

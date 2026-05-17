@@ -116,6 +116,25 @@ class Orchestrator:
 
         bus.subscribe("gate/result-added", handle_gate_result)
         bus.subscribe("gate/resolved", handle_gate_resolved)
+
+        async def handle_task_created(payload):
+            # Try to mark as processing immediately to claim it
+            task_id = payload.get("id")
+            with sqlite3.connect(self.memory.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("BEGIN IMMEDIATE")
+                cursor.execute("SELECT * FROM tasks WHERE id = ? AND status = 'pending'", (task_id,))
+                row = cursor.fetchone()
+                if row:
+                    task = dict(row)
+                    cursor.execute("UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?", (datetime.now(), task_id))
+                    conn.commit()
+                    await self.task_queue.put(task)
+                else:
+                    conn.rollback()
+
+        bus.subscribe("task/created", handle_task_created)
         asyncio.create_task(bus.start_polling())
 
         # Start worker pool

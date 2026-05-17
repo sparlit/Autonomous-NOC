@@ -32,16 +32,16 @@ class AutoHealer(BaseAgent):
 
     async def monitor_failures(self):
         """
-        Poll for failed tasks and start healing.
+        Listen for task/failed events and start healing.
         """
         from nanoc.core.event_bus import EventBus
         bus = EventBus(self.memory)
 
-        async def on_task_log(payload):
-            content = payload.get("content", "")
-            if "failed permanently" in content:
-                # Extract task ID from content if possible, or just log investigation
-                await self.log("Permanent failure detected, initiating investigation...")
+        async def on_task_failed(payload):
+            task_id = payload.get("task_id")
+            error = payload.get("error")
+            if task_id:
+                await self.handle_failure(task_id, error)
 
-        bus.subscribe("agent/log", on_task_log)
+        bus.subscribe("task/failed", on_task_failed)
         await bus.start_polling()
