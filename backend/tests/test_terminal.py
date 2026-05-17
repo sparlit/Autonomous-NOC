@@ -454,3 +454,176 @@ class TestTerminalWebsocketRoute:
                     ws.close()
             except Exception:
                 pass  # Connection closed by server is acceptable here
+
+
+# ---------------------------------------------------------------------------
+# get_token_auth – PR addition: token-based authentication
+# ---------------------------------------------------------------------------
+
+class TestGetTokenAuth:
+    """Tests for the new get_token_auth dependency introduced in this PR."""
+
+    @pytest.mark.asyncio
+    async def test_valid_token_returns_token(self):
+        """When the query param token matches the configured secret, the token is returned."""
+        from app.api.endpoints.terminal import get_token_auth
+        ws = MagicMock()
+        ws.query_params = {"token": "secret-foss-token"}
+        ws.close = AsyncMock()
+
+        with patch("app.api.endpoints.terminal.settings") as mock_settings:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
+            result = await get_token_auth(ws)
+
+        assert result == "secret-foss-token"
+        ws.close.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_closes_websocket_with_1008(self):
+        """When token does not match, websocket is closed with code 1008."""
+        from app.api.endpoints.terminal import get_token_auth
+        ws = MagicMock()
+        ws.query_params = {"token": "wrong-token"}
+        ws.close = AsyncMock()
+
+        with patch("app.api.endpoints.terminal.settings") as mock_settings:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
+            result = await get_token_auth(ws)
+
+        assert result is None
+        ws.close.assert_awaited_once_with(code=1008)
+
+    @pytest.mark.asyncio
+    async def test_missing_token_closes_websocket_with_1008(self):
+        """When no token query param is provided, websocket is closed with code 1008."""
+        from app.api.endpoints.terminal import get_token_auth
+        ws = MagicMock()
+        ws.query_params = {}
+        ws.close = AsyncMock()
+
+        with patch("app.api.endpoints.terminal.settings") as mock_settings:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
+            result = await get_token_auth(ws)
+
+        assert result is None
+        ws.close.assert_awaited_once_with(code=1008)
+
+    @pytest.mark.asyncio
+    async def test_empty_string_token_is_rejected(self):
+        """An empty string token does not match and is rejected."""
+        from app.api.endpoints.terminal import get_token_auth
+        ws = MagicMock()
+        ws.query_params = {"token": ""}
+        ws.close = AsyncMock()
+
+        with patch("app.api.endpoints.terminal.settings") as mock_settings:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
+            result = await get_token_auth(ws)
+
+        assert result is None
+        ws.close.assert_awaited_once_with(code=1008)
+
+    @pytest.mark.asyncio
+    async def test_token_check_is_case_sensitive(self):
+        """Token comparison is case-sensitive; wrong case is rejected."""
+        from app.api.endpoints.terminal import get_token_auth
+        ws = MagicMock()
+        ws.query_params = {"token": "SECRET-FOSS-TOKEN"}
+        ws.close = AsyncMock()
+
+        with patch("app.api.endpoints.terminal.settings") as mock_settings:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
+            result = await get_token_auth(ws)
+
+        assert result is None
+        ws.close.assert_awaited_once_with(code=1008)
+
+
+# ---------------------------------------------------------------------------
+# terminal_websocket – auth integration with the route
+# ---------------------------------------------------------------------------
+
+class TestTerminalWebsocketAuth:
+    """Tests that terminal_websocket correctly enforces token auth before starting session."""
+
+    @pytest.mark.asyncio
+    async def test_valid_token_starts_terminal_session(self):
+        """With a valid token, TerminalSession.start is called."""
+        from app.api.endpoints.terminal import terminal_websocket
+        ws = MagicMock()
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+        ws.query_params = {"token": "good-token"}
+
+        with patch("app.api.endpoints.terminal.settings") as mock_settings, \
+             patch("app.api.endpoints.terminal.TerminalSession") as MockSession:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "good-token"
+            mock_instance = MagicMock()
+            mock_instance.start = AsyncMock()
+            MockSession.return_value = mock_instance
+
+            await terminal_websocket(ws)
+
+        ws.accept.assert_awaited_once()
+        mock_instance.start.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_does_not_start_session(self):
+        """With an invalid token, TerminalSession.start is NOT called."""
+        from app.api.endpoints.terminal import terminal_websocket
+        ws = MagicMock()
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+        ws.query_params = {"token": "bad-token"}
+
+        with patch("app.api.endpoints.terminal.settings") as mock_settings, \
+             patch("app.api.endpoints.terminal.TerminalSession") as MockSession:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "correct-token"
+            mock_instance = MagicMock()
+            mock_instance.start = AsyncMock()
+            MockSession.return_value = mock_instance
+
+            await terminal_websocket(ws)
+
+        MockSession.assert_not_called()
+        mock_instance.start.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_websocket_is_always_accepted_before_auth(self):
+        """The WebSocket is accepted before auth check (to allow clean rejection)."""
+        from app.api.endpoints.terminal import terminal_websocket
+        ws = MagicMock()
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+        ws.query_params = {"token": "wrong"}
+        call_order = []
+        ws.accept.side_effect = lambda: call_order.append("accept")
+        ws.close.side_effect = lambda code=None: call_order.append("close")
+
+        with patch("app.api.endpoints.terminal.settings") as mock_settings:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "secret"
+            with patch("app.api.endpoints.terminal.TerminalSession"):
+                await terminal_websocket(ws)
+
+        assert "accept" in call_order
+        assert call_order.index("accept") < call_order.index("close")
+
+    @pytest.mark.asyncio
+    async def test_session_start_exception_closes_websocket(self):
+        """When TerminalSession.start raises, the websocket is closed."""
+        from app.api.endpoints.terminal import terminal_websocket
+        ws = MagicMock()
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+        ws.query_params = {"token": "valid"}
+
+        with patch("app.api.endpoints.terminal.settings") as mock_settings, \
+             patch("app.api.endpoints.terminal.TerminalSession") as MockSession:
+            mock_settings.TERMINAL_ACCESS_TOKEN = "valid"
+            mock_instance = MagicMock()
+            mock_instance.start = AsyncMock(side_effect=RuntimeError("fork failed"))
+            MockSession.return_value = mock_instance
+
+            await terminal_websocket(ws)
+
+        ws.close.assert_awaited()
