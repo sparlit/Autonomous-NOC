@@ -1,0 +1,81 @@
+{
+  "name": "NANOC Hierarchical Autonomous NOC",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "1",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "content": "## CEO Assignment\nAnalyze and identify any gaps or blind spots in the project.",
+        "options": {}
+      },
+      "id": "2",
+      "name": "CEO Task Node",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:8000/api/data/tasks",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "description",
+              "value": "CEO Assignment: Full Project Audit and Continuous Improvement Loop"
+            },
+            {
+              "name": "assigned_to",
+              "value": "ProjectManager"
+            }
+          ]
+        }
+      },
+      "id": "3",
+      "name": "Assign to PM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [800, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "CEO Task Node",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CEO Task Node": {
+      "main": [
+        [
+          {
+            "node": "Assign to PM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

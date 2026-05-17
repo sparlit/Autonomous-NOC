@@ -115,7 +115,50 @@ class BaseAgent:
     def register_tool(self, name: str, func: callable):
         self.tools[name] = func
 
+class ProjectManager(BaseAgent):
+    def __init__(self, agent_id: str, memory: Memory, provider: Optional[LLMProvider] = None):
+        super().__init__(agent_id, "Project Manager", memory, provider)
+        self.teams = {} # team_leader_id -> {agents: [], sub_agents: []}
+        self.reports_to = "CEO"
+
+    async def create_team(self, leader_id: str):
+        """Create a team with 3 agents and 6 sub-agents."""
+        team = {
+            "agents": [f"{leader_id}_Agent_{i}" for i in range(1, 4)],
+            "sub_agents": [f"{leader_id}_SubAgent_{i}" for i in range(1, 7)]
+        }
+        self.teams[leader_id] = team
+        await self.log(f"Team created for leader {leader_id}")
+        return team
+
+    async def handle_request(self, leader_id: str, request: str):
+        """Review and fulfill requests from team leaders."""
+        await self.log(f"Handling request from {leader_id}: {request}")
+        # Logic to fulfill resource requests
+        return f"Request fulfilled: {request}"
+
+    async def assign_tasks_to_teams(self, task: str):
+        """Assign tasks for all teams."""
+        await self.log(f"Assigning task to teams: {task}")
+        for leader_id in self.teams:
+            self.memory.create_task(f"Team Task: {task}", assigned_to=leader_id, project_id="CEO_PROJECT")
+
 class TeamLeader(BaseAgent):
+    def __init__(self, agent_id: str, role: str, memory: Memory, provider: Optional[LLMProvider] = None):
+        super().__init__(agent_id, role, memory, provider)
+        self.reports_to = "Project Manager"
+        self.agents = []
+        self.sub_agents = []
+
+    async def request_resources(self, need: str):
+        """Request more agents or sub-agents from Project Manager."""
+        await self.log(f"Requesting resources: {need}")
+        # In a real system, this would publish an event or call PM directly
+        self.memory.publish_event("team/resource-request", {
+            "leader_id": self.agent_id,
+            "need": need
+        })
+
     async def delegate_tasks(self, project_description: str):
         project_id = f"proj_{int(datetime.now().timestamp())}"
         await self.log(f"Starting project {project_id}: {project_description}")
@@ -197,6 +240,14 @@ class Planner(BaseAgent):
                 task_desc = line.replace("TASK:", "").strip()
                 self.memory.create_task(f"{project_id}: {task_desc}", assigned_to="Coder")
         return todo_list
+
+class SubAgent(BaseAgent):
+    def __init__(self, agent_id: str, role: str, memory: Memory, provider: Optional[LLMProvider] = None):
+        super().__init__(agent_id, f"Sub-Agent ({role})", memory, provider)
+
+    async def execute_granular_task(self, task: str):
+        await self.log(f"Executing granular task: {task}")
+        return await self.think(f"Execute this granular task: {task}")
 
 class Coder(BaseAgent):
     async def write_code(self, task: str):

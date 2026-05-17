@@ -30,6 +30,9 @@ class Memory:
                     assigned_to TEXT,
                     status TEXT,
                     result TEXT,
+                    retry_count INTEGER DEFAULT 0,
+                    max_retries INTEGER DEFAULT 3,
+                    priority INTEGER DEFAULT 0,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
