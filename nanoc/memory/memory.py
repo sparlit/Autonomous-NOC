@@ -10,6 +10,8 @@ class Memory:
 
     def _init_db(self):
         with sqlite3.connect(self.db_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
             cursor = conn.cursor()
             # Agent registry
             cursor.execute('''
@@ -30,6 +32,9 @@ class Memory:
                     assigned_to TEXT,
                     status TEXT,
                     result TEXT,
+                    retry_count INTEGER DEFAULT 0,
+                    max_retries INTEGER DEFAULT 3,
+                    priority INTEGER DEFAULT 1,
                     created_at TIMESTAMP,
                     updated_at TIMESTAMP
                 )
@@ -165,12 +170,36 @@ class Memory:
                 return json.loads(row[0])
             return None
 
-    def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None) -> int:
+    def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None, priority: int = 1) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO tasks (description, assigned_to, status, parent_id, project_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (description, assigned_to, 'pending', parent_id, project_id, datetime.now(), datetime.now()))
+                INSERT INTO tasks (description, assigned_to, status, parent_id, project_id, priority, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (description, assigned_to, 'pending', parent_id, project_id, priority, datetime.now(), datetime.now()))
             conn.commit()
             return cursor.lastrowid
+
+    def update_task_status(self, task_id: int, status: str, result: Optional[str] = None, retry: bool = False):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            if retry:
+                cursor.execute("SELECT retry_count, max_retries FROM tasks WHERE id = ?", (task_id,))
+                row = cursor.fetchone()
+                if row and row['retry_count'] < row['max_retries']:
+                    cursor.execute(
+                        "UPDATE tasks SET status = 'pending', result = ?, retry_count = retry_count + 1, updated_at = ? WHERE id = ?",
+                        (result, datetime.now(), task_id)
+                    )
+                    conn.commit()
+                    return True
+                status = 'failed'
+
+            cursor.execute(
+                "UPDATE tasks SET status = ?, result = ?, updated_at = ? WHERE id = ?",
+                (status, result, datetime.now(), task_id)
+            )
+            conn.commit()
+            return False

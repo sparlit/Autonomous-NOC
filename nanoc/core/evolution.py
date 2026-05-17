@@ -1,7 +1,30 @@
 import subprocess
 import os
 import shutil
+import ast
+from typing import List
 from nanoc.core.config import settings
+
+class SelfEvolutionValidator(ast.NodeVisitor):
+    def __init__(self):
+        self.errors = []
+        self.dangerous_functions = {'eval', 'exec', '__import__'}
+        self.dangerous_attributes = {
+            'os': {'system', 'popen', 'spawn', 'kill'},
+            'subprocess': {'run', 'Popen', 'call', 'check_call', 'check_output'}
+        }
+
+    def visit_Call(self, node):
+        if isinstance(node.func, ast.Name):
+            if node.func.id in self.dangerous_functions:
+                self.errors.append(f"Dangerous function call: {node.func.id} at line {node.lineno}")
+        elif isinstance(node.func, ast.Attribute):
+            if isinstance(node.func.value, ast.Name):
+                module = node.func.value.id
+                attr = node.func.attr
+                if module in self.dangerous_attributes and attr in self.dangerous_attributes[module]:
+                    self.errors.append(f"Dangerous attribute access: {module}.{attr} at line {node.lineno}")
+        self.generic_visit(node)
 
 class SelfEvolutionManager:
     def __init__(self, workspace: str, staging: str):
@@ -15,8 +38,22 @@ class SelfEvolutionManager:
         # Copy nanoc directory to staging
         shutil.copytree("nanoc", os.path.join(self.staging, "nanoc"))
 
+    def validate_code(self, content: str) -> List[str]:
+        """Validate code for dangerous patterns using AST."""
+        try:
+            tree = ast.parse(content)
+            validator = SelfEvolutionValidator()
+            validator.visit(tree)
+            return validator.errors
+        except Exception as e:
+            return [f"AST Parsing Error: {e}"]
+
     def apply_change_to_staging(self, filepath: str, content: str):
-        """Apply a proposed code change to a file in staging."""
+        """Apply a proposed code change to a file in staging after validation."""
+        errors = self.validate_code(content)
+        if errors:
+            raise ValueError(f"Validation failed for {filepath}: {', '.join(errors)}")
+
         target_path = os.path.join(self.staging, filepath)
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         with open(target_path, "w") as f:

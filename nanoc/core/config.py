@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     DEFAULT_MODEL: str = "meta-llama/llama-3-8b-instruct:free"
 
+    # Orchestrator Settings
+    MAX_WORKERS: int = 10
+    INITIAL_WORKERS: int = 5
+
     model_config = ConfigDict(env_file=".env")
 
 settings = Settings()

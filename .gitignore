@@ -1,8 +1,13 @@
 __pycache__/
 *.pyc
 nanoc/memory/*.db
+nanoc/memory/*.db-shm
+nanoc/memory/*.db-wal
 nanoc/logs/*.txt
 nanoc/workspace/
 nanoc/staging/
 nanoc_backup/
 .env
+*.db
+*.db-shm
+*.db-wal

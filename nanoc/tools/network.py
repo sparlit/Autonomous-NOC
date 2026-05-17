@@ -1,122 +1,127 @@
-import subprocess
+import asyncio
 import json
+import os
 
-class PowerShellTool:
+class AsyncRunner:
     @staticmethod
-    def run_command(command: str):
-        """Run a PowerShell command and return output."""
+    async def run_command(cmd: list[str]):
+        """Run a command asynchronously and return output."""
         try:
-            result = subprocess.run(["powershell", "-Command", command], capture_output=True, text=True)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
             return {
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "returncode": result.returncode
+                "stdout": stdout.decode(),
+                "stderr": stderr.decode(),
+                "returncode": proc.returncode
             }
         except Exception as e:
             return {"error": str(e)}
 
 class SNMPTool:
     @staticmethod
-    def get_value(ip: str, community: str, oid: str):
+    async def get_value(ip: str, community: str, oid: str):
         """
         Execute an SNMP GET request.
-        Uses PowerShell snmpget wrapper or a generic snmpget command if available.
+        Uses standard net-snmp snmpget command.
         """
-        # Attempt to use powershell-snmp module if available
-        cmd = f"Get-SnmpData -IP {ip} -Community {community} -OID {oid}"
-        result = PowerShellTool.run_command(cmd)
-
-        # Fallback to standard net-snmp snmpget if powershell module fails
-        if result.get("returncode") != 0:
-            cmd = f"snmpget -v 2c -c {community} {ip} {oid}"
-            result = PowerShellTool.run_command(cmd)
-
-        return result
+        cmd = ["snmpget", "-v", "2c", "-c", community, ip, oid]
+        return await AsyncRunner.run_command(cmd)
 
 class NetworkScanner:
     @staticmethod
-    def scan_local_network(range: str):
-        # Using nmap (FOSS) if available on the Windows path
+    async def scan_local_network(ip_range: str, xml_output: bool = False):
         """
         Scan a local IP range to discover which hosts are reachable.
         
         Parameters:
-            range (str): The target IP range to scan (e.g., "192.168.1.0/24" or "192.168.1.0-254").
-        
-        Returns:
-            dict: Scan result containing command output and status. Expected keys:
-                - `stdout` (str): Standard output from the scan.
-                - `stderr` (str): Standard error from the scan.
-                - `returncode` (int): Process exit code.
-                - `error` (str): Error message if the command execution failed.
+            ip_range (str): The target IP range to scan (e.g., "192.168.1.0/24").
+            xml_output (bool): Whether to return XML output.
         """
-        return PowerShellTool.run_command(f"nmap -sn {range}")
+        cmd = ["nmap", "-sn"]
+        if xml_output:
+            cmd.append("-oX")
+            cmd.append("-")
+        cmd.append(ip_range)
+        return await AsyncRunner.run_command(cmd)
 
 class DiagnosticTools:
     @staticmethod
-    def ping(target: str, count: int = 4):
+    async def ping(target: str, count: int = 4):
         """
-        Execute a Windows ping to a target host.
-        
-        Parameters:
-            target (str): Hostname or IP address to ping.
-            count (int): Number of echo requests to send.
-        
-        Returns:
-            dict: Command execution result containing `stdout`, `stderr`, and `returncode`, or `{'error': <message>}` if execution failed.
+        Execute a ping to a target host.
         """
-        cmd = f"ping -n {count} {target}"
-        return PowerShellTool.run_command(cmd)
+        cmd = ["ping", "-c", str(count), target]
+        return await AsyncRunner.run_command(cmd)
 
     @staticmethod
-    def traceroute(target: str):
+    async def traceroute(target: str):
         """
-        Trace the network route (hops) to the specified host or IP using the system traceroute command.
-        
-        Parameters:
-            target (str): Hostname or IP address to trace.
-        
-        Returns:
-            dict: Result from PowerShellTool.run_command containing `stdout`, `stderr`, and `returncode`, or an `error` key if execution failed.
+        Trace the network route (hops) to the specified host or IP.
         """
-        cmd = f"tracert {target}"
-        return PowerShellTool.run_command(cmd)
+        cmd = ["traceroute", target]
+        return await AsyncRunner.run_command(cmd)
 
 class DiscoveryTool:
     @staticmethod
-    def discover_topology():
+    async def discover_topology(ip_range: str = "127.0.0.1"):
         """
-        Discover network topology by checking known state or simulating discovery.
+        Discover network topology using nmap XML output for robust parsing.
         
         Returns:
             topology (dict): A dictionary with "nodes" and "edges".
         """
+        import xml.etree.ElementTree as ET
         from nanoc.memory.memory import Memory
         from nanoc.core.config import settings
         memory = Memory(settings.DB_PATH)
 
-        # Try to get from knowledge base first
-        topology = memory.get_knowledge("network_topology")
-        if topology:
-            return topology
+        result = await NetworkScanner.scan_local_network(ip_range, xml_output=True)
+        if "error" in result:
+            return {"error": result["error"]}
 
-        # Fallback to realistic default
-        topology = {
-            "nodes": [
-                {"id": "Core-Rtr-01", "label": "Core Router", "type": "router", "status": "online"},
-                {"id": "Dist-Sw-01", "label": "Distribution Switch 1", "type": "switch", "status": "online"},
-                {"id": "Dist-Sw-02", "label": "Distribution Switch 2", "type": "switch", "status": "online"},
-                {"id": "Access-Sw-01", "label": "Access Switch 1", "type": "switch", "status": "online"},
-                {"id": "IoT-Gateway", "label": "IoT Gateway", "type": "router", "status": "warning"},
-            ],
-            "edges": [
-                {"from": "Core-Rtr-01", "to": "Dist-Sw-01", "label": "10Gbps"},
-                {"from": "Core-Rtr-01", "to": "Dist-Sw-02", "label": "10Gbps"},
-                {"from": "Dist-Sw-01", "to": "Access-Sw-01", "label": "1Gbps"},
-                {"from": "Core-Rtr-01", "to": "IoT-Gateway", "label": "1Gbps"},
-            ]
-        }
+        nodes = []
+        edges = []
 
-        # Store for future use
+        try:
+            root = ET.fromstring(result["stdout"])
+            for host in root.findall('host'):
+                status = host.find('status').get('state')
+                if status == 'up':
+                    ip = host.find("address[@addrtype='ipv4']").get('addr')
+
+                    hostname_elem = host.find('hostnames/hostname')
+                    name = hostname_elem.get('name') if hostname_elem is not None else ip
+
+                    nodes.append({
+                        "id": ip,
+                        "label": name,
+                        "type": "host",
+                        "status": "online"
+                    })
+
+                    if ip != "127.0.0.1":
+                        edges.append({"from": "127.0.0.1", "to": ip, "label": "LAN"})
+        except Exception as e:
+            # Fallback to simple parsing if XML fails
+            print(f"XML parsing failed, using fallback: {e}")
+            fallback_result = await NetworkScanner.scan_local_network(ip_range, xml_output=False)
+            lines = fallback_result["stdout"].split("\n")
+            for line in lines:
+                if "Nmap scan report for" in line:
+                    parts = line.split()
+                    ip = parts[-1].strip("()")
+                    name = parts[4] if len(parts) > 5 else ip
+                    nodes.append({"id": ip, "label": name, "type": "host", "status": "online"})
+                    if ip != "127.0.0.1":
+                        edges.append({"from": "127.0.0.1", "to": ip, "label": "LAN"})
+
+        if not nodes:
+            nodes = [{"id": "127.0.0.1", "label": "localhost", "type": "host", "status": "online"}]
+
+        topology = {"nodes": nodes, "edges": edges}
         memory.upsert_knowledge("network_topology", topology)
         return topology
