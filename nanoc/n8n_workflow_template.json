@@ -1,0 +1,93 @@
+{
+  "name": "NANOC Hierarchical Team Workflow (API Compatible)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "trigger",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "task_description",
+              "value": "Project: Autonomous Network Operating Center\nCore principle: use only 100% FOSS software, tools and utilities\nRules:\n1. Multi Thread Parallel Processing capability\n2. while improving or enhancing, do not remove or discontinue any features or functionalities.\n\nStep 1: analyse and identify any gaps or blind spots or dead ends or loop holes or wrappers or loose ends or dummies in the project.\nStep 2: fix all gaps and all blind spots and dead ends and loop holes and wrappers and loose ends and dummies in the project.\nStep 3: Continuous improving and enhancing the project\nStep 4: do not remove any features or functionalities, only add.\nStep 5: analyse and find how can we improve and enhance further.\nstep 6: suggest improvements, enhancements, functions and features\nstep 7: Continuous Codebase Improvement\nstep 8: repeat the above steps from step 1 to step 7 until all features and functions are added and there is nothing left to improve or enhance"
+            }
+          ]
+        }
+      },
+      "id": "init",
+      "name": "PM Task Init",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/inbox",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "description",
+              "value": "={{$json.task_description}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "api_call",
+      "name": "Send to PM Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        500,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Every 30 Minutes": {
+      "main": [
+        [
+          {
+            "node": "PM Task Init",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PM Task Init": {
+      "main": [
+        [
+          {
+            "node": "Send to PM Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

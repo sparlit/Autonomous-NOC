@@ -24,8 +24,28 @@ def get_logs(limit: int = 50):
         rows = cursor.fetchall()
         return {"logs": [dict(row) for row in rows]}
 
+from pydantic import BaseModel
+class TaskRequest(BaseModel):
+    description: str
+
+@app.post("/inbox")
+async def post_inbox(task: TaskRequest):
+    # Create a project file for the inbox_watcher to pick up
+    timestamp = int(time.time())
+    filename = f"nanoc/inbox/api_task_{timestamp}.txt"
+    with open(filename, "w") as f:
+        f.write(task.description)
+    return {"status": "Task queued via API", "file": filename}
+
 def inbox_watcher():
-    leader = TeamLeader("Leader", "Team Leader", memory)
+    from nanoc.agents.base import ProjectManager
+    # Hierarchical Team Setup
+    # PM -> 2 Team Leaders -> 3 Members each
+    team_leaders = ["NetOps_Lead", "DevOps_Lead"]
+    pm = ProjectManager("PM_Agent", memory, team_leaders)
+
+    # In this environment, we still use TeamLeader directly for simplicity in inbox_watcher
+    # but we can wrap it to use PM logic if the task is complex.
     while True:
         files = glob.glob("nanoc/inbox/*.txt")
         for f in files:
@@ -34,7 +54,12 @@ def inbox_watcher():
             # Start the agentic workflow
             print(f"New project detected: {project_desc}")
             import asyncio
-            asyncio.run(leader.delegate_tasks(project_desc))
+            if "Step 1:" in project_desc:
+                # Use PM for complex 8-step tasks
+                asyncio.run(pm.manage_project(project_desc))
+            else:
+                leader = TeamLeader("Leader", "Team Leader", memory)
+                asyncio.run(leader.delegate_tasks(project_desc))
             # delete file after processing or move to 'processed'
             os.remove(f)
 
@@ -50,7 +75,16 @@ async def startup_event():
     from nanoc.core.orchestrator import Orchestrator
     from nanoc.agents.base import TeamLeader, Architect, Planner, Coder, Reviewer
 
-    # Initialize Agents
+    # Initialize Teams with 3 members + 1 leader each as requested
+    # Team 1: NetOps
+    netops_members = ["Net_Architect", "Net_Coder", "Net_Reviewer"]
+    netops_lead = TeamLeader("NetOps_Lead", "NetOps Leader", memory, members=netops_members)
+
+    # Team 2: DevOps
+    devops_members = ["Dev_Architect", "Dev_Coder", "Dev_Reviewer"]
+    devops_lead = TeamLeader("DevOps_Lead", "DevOps Leader", memory, members=devops_members)
+
+    # Global shared agents for default fallback
     leader = TeamLeader("Leader", "Team Leader", memory)
     architect = Architect("Architect", "Architect", memory)
     planner = Planner("Planner", "Planner", memory)
@@ -58,6 +92,17 @@ async def startup_event():
     reviewer = Reviewer("Reviewer", "Reviewer", memory)
 
     orchestrator = Orchestrator(memory, leader)
+    # Register all hierarchical agents
+    orchestrator.add_agent(netops_lead)
+    orchestrator.add_agent(devops_lead)
+    # Register individual member roles to handle their tasks
+    orchestrator.add_agent(Architect("Net_Architect", "Architect", memory))
+    orchestrator.add_agent(Coder("Net_Coder", "Coder", memory))
+    orchestrator.add_agent(Reviewer("Net_Reviewer", "Reviewer", memory))
+    orchestrator.add_agent(Architect("Dev_Architect", "Architect", memory))
+    orchestrator.add_agent(Coder("Dev_Coder", "Coder", memory))
+    orchestrator.add_agent(Reviewer("Dev_Reviewer", "Reviewer", memory))
+
     orchestrator.add_agent(leader)
     orchestrator.add_agent(architect)
     orchestrator.add_agent(planner)
@@ -66,6 +111,10 @@ async def startup_event():
 
     # Background threads
     threading.Thread(target=inbox_watcher, daemon=True).start()
+
+    # Start Maintainer
+    from nanoc.core.maintainer import main as maintainer_main
+    threading.Thread(target=maintainer_main, daemon=True).start()
 
     from nanoc.agents.governor import Governor
     governor = Governor("SystemGovernor", memory, {})
