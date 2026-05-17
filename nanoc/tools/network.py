@@ -1,12 +1,14 @@
 import subprocess
 import json
+import os
+import platform
 
-class PowerShellTool:
+class ShellTool:
     @staticmethod
-    def run_command(command: str):
-        """Run a PowerShell command and return output."""
+    def run_command(args: list):
+        """Run a shell command and return output."""
         try:
-            result = subprocess.run(["powershell", "-Command", command], capture_output=True, text=True)
+            result = subprocess.run(args, capture_output=True, text=True)
             return {
                 "stdout": result.stdout,
                 "stderr": result.stderr,
@@ -19,68 +21,39 @@ class SNMPTool:
     @staticmethod
     def get_value(ip: str, community: str, oid: str):
         """
-        Execute an SNMP GET request.
-        Uses PowerShell snmpget wrapper or a generic snmpget command if available.
+        Execute an SNMP GET request using net-snmp snmpget (FOSS).
         """
-        # Attempt to use powershell-snmp module if available
-        cmd = f"Get-SnmpData -IP {ip} -Community {community} -OID {oid}"
-        result = PowerShellTool.run_command(cmd)
-
-        # Fallback to standard net-snmp snmpget if powershell module fails
-        if result.get("returncode") != 0:
-            cmd = f"snmpget -v 2c -c {community} {ip} {oid}"
-            result = PowerShellTool.run_command(cmd)
-
-        return result
+        cmd = ["snmpget", "-v", "2c", "-c", community, ip, oid]
+        return ShellTool.run_command(cmd)
 
 class NetworkScanner:
     @staticmethod
-    def scan_local_network(range: str):
-        # Using nmap (FOSS) if available on the Windows path
+    def scan_local_network(ip_range: str):
         """
-        Scan a local IP range to discover which hosts are reachable.
-        
-        Parameters:
-            range (str): The target IP range to scan (e.g., "192.168.1.0/24" or "192.168.1.0-254").
-        
-        Returns:
-            dict: Scan result containing command output and status. Expected keys:
-                - `stdout` (str): Standard output from the scan.
-                - `stderr` (str): Standard error from the scan.
-                - `returncode` (int): Process exit code.
-                - `error` (str): Error message if the command execution failed.
+        Scan a local IP range using nmap (FOSS).
         """
-        return PowerShellTool.run_command(f"nmap -sn {range}")
+        cmd = ["nmap", "-sn", ip_range]
+        return ShellTool.run_command(cmd)
 
 class DiagnosticTools:
     @staticmethod
     def ping(target: str, count: int = 4):
         """
-        Execute a Windows ping to a target host.
-        
-        Parameters:
-            target (str): Hostname or IP address to ping.
-            count (int): Number of echo requests to send.
-        
-        Returns:
-            dict: Command execution result containing `stdout`, `stderr`, and `returncode`, or `{'error': <message>}` if execution failed.
+        Execute a ping to a target host using FOSS ping.
         """
-        cmd = f"ping -n {count} {target}"
-        return PowerShellTool.run_command(cmd)
+        # Determine flag based on platform
+        flag = "-n" if platform.system() == "Windows" else "-c"
+        cmd = ["ping", flag, str(count), target]
+        return ShellTool.run_command(cmd)
 
     @staticmethod
     def traceroute(target: str):
         """
-        Trace the network route (hops) to the specified host or IP using the system traceroute command.
-        
-        Parameters:
-            target (str): Hostname or IP address to trace.
-        
-        Returns:
-            dict: Result from PowerShellTool.run_command containing `stdout`, `stderr`, and `returncode`, or an `error` key if execution failed.
+        Trace the network route using traceroute (FOSS).
         """
-        cmd = f"tracert {target}"
-        return PowerShellTool.run_command(cmd)
+        cmd_name = "tracert" if platform.system() == "Windows" else "traceroute"
+        cmd = [cmd_name, target]
+        return ShellTool.run_command(cmd)
 
 class DiscoveryTool:
     @staticmethod

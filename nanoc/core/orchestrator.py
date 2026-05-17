@@ -82,7 +82,12 @@ class Orchestrator:
 
                     try:
                         # Use the unified agent interface
-                        result = await agent.handle_task(task)
+                        if role == "Architect" and len(self.agents) > 1:
+                            # Use internal debate for architectural decisions
+                            debater = Debater(list(self.agents.values()))
+                            result = await debater.debate(task['description'])
+                        else:
+                            result = await agent.handle_task(task)
 
                         # Special case for Reviewer to re-assign if failed
                         if role == "Reviewer" and "APPROVED" not in result:

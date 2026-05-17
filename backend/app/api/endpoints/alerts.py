@@ -7,17 +7,28 @@ router = APIRouter()
 @router.get("/summary")
 async def get_alerts_summary():
     """
-    Returns a summary of active alerts from Keep.
+    Returns a summary of active alerts from Keep and internal state.
     """
-    # Mocking for now
+    all_alerts_resp = await get_all_alerts()
+    alerts = all_alerts_resp.get("alerts", [])
+
+    urgent = len([a for r in alerts if (a.get("severity") == "critical" or a.get("severity") == "urgent")])
+    warning = len([a for r in alerts if a.get("severity") == "warning"])
+
+    recent = []
+    for a in alerts[:5]:
+        recent.append({
+            "time": a.get("timestamp", "").split("T")[-1][:8] if "T" in a.get("timestamp", "") else "unknown",
+            "event": a.get("title", "Unknown Event"),
+            "status": "Active"
+        })
+
     return {
-        "active_alerts": 3,
-        "urgent": 2,
-        "warning": 1,
-        "recent_events": [
-            {"time": "14:23:01", "event": "Switch-04 port Gi0/1 bounce", "status": "Resolved"},
-            {"time": "14:20:15", "event": "High latency detected in US-EAST", "status": "Investigating"},
-            {"time": "14:15:30", "event": "Backup job completed", "status": "Success"}
+        "active_alerts": len(alerts),
+        "urgent": urgent,
+        "warning": warning,
+        "recent_events": recent or [
+            {"time": "00:00:00", "event": "No active alerts", "status": "Nominal"}
         ]
     }
 
