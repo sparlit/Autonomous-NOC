@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from nanoc.core.llm import LLMProvider
@@ -164,7 +165,7 @@ class TeamLeader(BaseAgent):
                 project_description = parts[1].strip()
 
         if project_id == "unknown":
-            project_id = f"proj_{int(datetime.now().timestamp())}"
+            project_id = f"proj_{int(datetime.now().timestamp())}_{os.urandom(4).hex()}"
 
         await self.log(f"Team Leader {self.agent_id} managing project {project_id}")
 

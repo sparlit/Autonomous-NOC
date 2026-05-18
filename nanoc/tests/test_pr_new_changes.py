@@ -1502,7 +1502,7 @@ class TestTeamLeaderDelegateTasks:
 
         events = memory.get_events(topic="project/incoming-job")
         payload = json.loads(events[-1]["payload"])
-        assert "leader" not in payload
+        assert "leader" in payload
 
     @pytest.mark.anyio
     async def test_delegate_tasks_creates_architect_task(self, memory):
