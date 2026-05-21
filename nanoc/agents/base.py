@@ -176,8 +176,7 @@ class TeamLeader(BaseAgent):
 
         self.memory.publish_event("project/incoming-job", {
             "project_id": project_id,
-            "description": project_description,
-            "leader": self.agent_id
+            "description": project_description
         })
 
         prompt = f"Break down this project into high-level architectural requirements:\n{project_description}"
