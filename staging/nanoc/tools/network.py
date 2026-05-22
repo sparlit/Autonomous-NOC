@@ -76,7 +76,7 @@ class DiscoveryTool:
     async def discover_topology(ip_range: str = "127.0.0.1"):
         """
         Discover network topology using nmap and traceroute.
-        
+
         Returns:
             topology (dict): A dictionary with "nodes" and "edges".
         """
