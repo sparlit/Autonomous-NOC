@@ -10,15 +10,15 @@ class BaseAgent:
     def __init__(self, agent_id: str, role: str, memory: Memory, provider: Optional[LLMProvider] = None):
         """
         Initialize the agent's identity, shared memory reference, LLM client, and tool registry.
-        
+
         Parameters:
-        	agent_id (str): Unique identifier for the agent.
-        	role (str): Human-readable role or responsibility of the agent.
-        	memory (Memory): Shared Memory instance used for logs, tasks, and knowledge storage.
-        	provider (Optional[LLMProvider]): LLM provider client to use; if None, a default LLMProvider is created.
-        
+		agent_id (str): Unique identifier for the agent.
+		role (str): Human-readable role or responsibility of the agent.
+		memory (Memory): Shared Memory instance used for logs, tasks, and knowledge storage.
+		provider (Optional[LLMProvider]): LLM provider client to use; if None, a default LLMProvider is created.
+
         Notes:
-        	Creates an empty tools registry and registers the module's default tools.
+		Creates an empty tools registry and registers the module's default tools.
         """
         self.agent_id = agent_id
         self.role = role
@@ -30,7 +30,7 @@ class BaseAgent:
     def _register_default_tools(self):
         """
         Register the agent's default network-related tools.
-        
+
         This adds three tool entries to the agent's tool registry:
         - "ping" mapped to DiagnosticTools.ping
         - "traceroute" mapped to DiagnosticTools.traceroute
@@ -43,9 +43,9 @@ class BaseAgent:
     async def log(self, content: str):
         """
         Record and publish an agent log message.
-        
+
         Prints the message prefixed with the agent role, appends the entry to shared memory, and publishes an "agent/log" event containing `agent_id`, `role`, and `content`.
-        
+
         Parameters:
             content (str): The log message to record and publish.
         """
@@ -60,18 +60,18 @@ class BaseAgent:
     async def think(self, prompt: str, use_tools: bool = False) -> str:
         """
         Generate a model response to the given prompt, optionally allowing the model to call registered tools.
-        
+
         When use_tools is True and tools are registered, the agent appends tool descriptions to the system prompt and accepts model outputs that request tool execution using the exact format:
         ACTION: tool_name ARGS: your_args
         If the model issues such an action and the named tool is registered, the agent will call the tool with the provided args, then re-enter thinking with the tool result incorporated.
-        
+
         Parameters:
             prompt (str): The user-facing prompt sent to the language model.
             use_tools (bool): If True, include registered tool descriptions in the system prompt and enable tool-invocation parsing.
-        
+
         Returns:
             str: The raw text response produced by the language model, or a follow-up response after a successfully executed tool call.
-        
+
         Side effects:
             Publishes "agent/thought/start" and "agent/thought/complete" events to shared memory, logs a truncated thought, and may synchronously invoke a registered tool if the model requests it.
         """
