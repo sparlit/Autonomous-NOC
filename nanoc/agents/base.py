@@ -1,8 +1,11 @@
 import asyncio
 import json
+import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from nanoc.core.llm import LLMProvider
+from nanoc.core.config import settings
+from nanoc.core.evolution import SelfEvolutionManager
 from nanoc.memory.memory import Memory
 from nanoc.tools.network import DiagnosticTools, DiscoveryTool
 
@@ -176,8 +179,7 @@ class TeamLeader(BaseAgent):
 
         self.memory.publish_event("project/incoming-job", {
             "project_id": project_id,
-            "description": project_description,
-            "leader": self.agent_id
+            "description": project_description
         })
 
         prompt = f"Break down this project into high-level architectural requirements:\n{project_description}"
@@ -268,8 +270,40 @@ class Coder(BaseAgent):
         await self.log(f"Coding task: {task}")
         project_id = task.split(":")[0] if ":" in task else "unknown"
 
-        prompt = f"Write the Python code to solve this task:\n{task}\nProvide ONLY the code."
-        code = await self.think(prompt)
+        prompt = (
+            f"Write the Python code to solve this task:\n{task}\n"
+            "Identify the relative filepath (starting with nanoc/) where this code should be saved.\n"
+            "Return your response in the format:\n"
+            "FILEPATH: <filepath>\n"
+            "CODE:\n"
+            "```python\n"
+            "<code>\n"
+            "```"
+        )
+        response = await self.think(prompt)
+
+        filepath = "nanoc/generated_code.py"
+        code = response
+
+        if "FILEPATH:" in response:
+            filepath = response.split("FILEPATH:")[1].split("\n")[0].strip()
+
+        if "```python" in response:
+            code = response.split("```python")[1].split("```")[0].strip()
+        elif "CODE:" in response:
+            code = response.split("CODE:")[1].strip()
+
+        # Use SelfEvolutionManager to stage the code
+        sem = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+        try:
+            # Ensure staging is prepared if it doesn't exist
+            if not os.path.exists(settings.STAGING_DIR):
+                sem.prepare_staging()
+
+            sem.apply_change_to_staging(filepath, code)
+            await self.log(f"Code staged to {filepath} in {settings.STAGING_DIR}")
+        except Exception as e:
+            await self.log(f"Failed to stage code: {e}")
 
         # Publish result to the event bus
         self.memory.publish_event("worker/response", {
@@ -277,11 +311,12 @@ class Coder(BaseAgent):
             "role": "Coder",
             "task": task,
             "result": code,
+            "filepath": filepath,
             "status": "pending_review"
         })
 
         # Verify and review before committing
-        self.memory.create_task(f"{project_id}: Review this code for flaws:\n{code}", assigned_to="Reviewer")
+        self.memory.create_task(f"{project_id}: Review this code for flaws in {filepath}:\n{code}", assigned_to="Reviewer")
         return code
 
 class Reviewer(BaseAgent):
