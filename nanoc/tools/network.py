@@ -122,7 +122,7 @@ class DiscoveryTool:
         except Exception:
              return DiscoveryTool._get_fallback_topology(memory)
 
-        # If it's only localhost found, we add the Core Router for the sake of tests and visibility
+        # If no nodes found or only localhost, use the fallback (which is just localhost)
         if len(nodes) <= 1:
             return DiscoveryTool._get_fallback_topology(memory)
 
@@ -134,12 +134,9 @@ class DiscoveryTool:
     def _get_fallback_topology(memory):
         topology = {
             "nodes": [
-                {"id": "Core-Rtr-01", "label": "Core Router", "type": "router", "status": "online"},
                 {"id": "127.0.0.1", "label": "localhost", "type": "host", "status": "online"}
             ],
-            "edges": [
-                {"from": "127.0.0.1", "to": "Core-Rtr-01", "label": "Uplink"}
-            ]
+            "edges": []
         }
         memory.upsert_knowledge("network_topology", topology)
         return topology

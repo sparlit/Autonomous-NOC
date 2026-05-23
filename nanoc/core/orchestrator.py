@@ -5,6 +5,8 @@ from datetime import datetime
 from typing import List, Dict, Any
 from nanoc.agents.base import BaseAgent
 from nanoc.memory.memory import Memory
+from nanoc.core.config import settings
+from nanoc.core.evolution import SelfEvolutionManager
 
 class Debater:
     def __init__(self, agents: List[BaseAgent]):
@@ -136,7 +138,13 @@ class Orchestrator:
                 arch = self.memory.get_knowledge(f"project_{project_id}_arch")
                 self.memory.create_task(f"{project_id}: Create task list for design: {arch[:50]}", assigned_to="Planner", project_id=project_id)
             elif gate_type == "code":
-                await analyst.log(f"Project {project_id} completed successfully.")
+                await analyst.log(f"Project {project_id} completed successfully. Promoting code to production...")
+                sem = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+                try:
+                    sem.promote_staging_to_production()
+                    await analyst.log(f"Project {project_id} code promoted to production.")
+                except Exception as e:
+                    await analyst.log(f"Failed to promote code for project {project_id}: {e}")
 
         async def handle_scale_up(payload):
             if len(self.current_workers) < self.max_workers:
