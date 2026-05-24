@@ -176,8 +176,7 @@ class TeamLeader(BaseAgent):
 
         self.memory.publish_event("project/incoming-job", {
             "project_id": project_id,
-            "description": project_description,
-            "leader": self.agent_id
+            "description": project_description
         })
 
         prompt = f"Break down this project into high-level architectural requirements:\n{project_description}"
@@ -268,8 +267,38 @@ class Coder(BaseAgent):
         await self.log(f"Coding task: {task}")
         project_id = task.split(":")[0] if ":" in task else "unknown"
 
-        prompt = f"Write the Python code to solve this task:\n{task}\nProvide ONLY the code."
-        code = await self.think(prompt)
+        prompt = (
+            f"Write the Python code to solve this task:\n{task}\n"
+            "Format your response as follows:\n"
+            "FILEPATH: relative/path/to/file.py\n"
+            "CODE:\n"
+            "```python\n"
+            "your code here\n"
+            "```"
+        )
+        response = await self.think(prompt)
+
+        # Extract filepath and code
+        filepath = "unknown_file.py"
+        code = response
+        if "FILEPATH:" in response:
+            filepath = response.split("FILEPATH:")[1].split("\n")[0].strip()
+        if "```python" in response:
+            code = response.split("```python")[1].split("```")[0].strip()
+        elif "CODE:" in response:
+            code = response.split("CODE:")[1].strip()
+
+        # Stage the change using SelfEvolutionManager
+        from nanoc.core.evolution import SelfEvolutionManager
+        from nanoc.core.config import settings
+        sem = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+
+        try:
+            sem.prepare_staging()
+            sem.apply_change_to_staging(filepath, code)
+            await self.log(f"Code staged for {filepath}")
+        except Exception as e:
+            await self.log(f"Failed to stage code: {e}")
 
         # Publish result to the event bus
         self.memory.publish_event("worker/response", {
@@ -277,6 +306,7 @@ class Coder(BaseAgent):
             "role": "Coder",
             "task": task,
             "result": code,
+            "filepath": filepath,
             "status": "pending_review"
         })
 

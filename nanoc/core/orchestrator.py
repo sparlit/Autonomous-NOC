@@ -136,7 +136,12 @@ class Orchestrator:
                 arch = self.memory.get_knowledge(f"project_{project_id}_arch")
                 self.memory.create_task(f"{project_id}: Create task list for design: {arch[:50]}", assigned_to="Planner", project_id=project_id)
             elif gate_type == "code":
-                await analyst.log(f"Project {project_id} completed successfully.")
+                from nanoc.core.evolution import SelfEvolutionManager
+                from nanoc.core.config import settings
+                sem = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+                await analyst.log(f"Project {project_id} code gate passed. Promoting changes to production...")
+                sem.promote_staging_to_production()
+                await analyst.log(f"Project {project_id} completed successfully and evolved.")
 
         async def handle_scale_up(payload):
             if len(self.current_workers) < self.max_workers:
