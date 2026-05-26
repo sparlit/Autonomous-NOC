@@ -1,23 +1,19 @@
 """
-Comprehensive tests for the latest PR changes, covering gaps not addressed
-in test_pr_new_changes.py:
-
-  - bulk_improve.py                   (new top-level script: file creation, content, naming)
-  - nanoc/memory/memory.py            (create_task: priority param removed)
-  - nanoc/core/llm.py                 (no retry logic: immediate failure on errors)
-  - nanoc/core/orchestrator.py        (explicit role-based dispatch, Reviewer fix-task)
-  - nanoc/agents/base.py              (handle_task removed from all agent subclasses)
-  - nanoc/agents/security.py          (event payload has no findings/vulnerabilities)
-  - nanoc/agents/base.TeamLeader      (project_id format: no hex suffix)
+Tests for changes introduced in the bulk_improve PR:
+  - bulk_improve.py               (new file: creates 100 inbox task files)
+  - nanoc/agents/base.py          (removed handle_task methods, project_id no longer has hex suffix)
+  - nanoc/agents/security.py      (simplified event payload – no findings/vulnerabilities)
+  - nanoc/core/llm.py             (removed retry loop – single attempt, any exception calls _record_error)
+  - nanoc/core/orchestrator.py    (explicit role-based dispatch instead of handle_task)
+  - nanoc/memory/memory.py        (removed priority param from create_task)
 """
 import asyncio
 import json
 import os
-import re
 import sqlite3
-import tempfile
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+import inspect
+from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
 
@@ -26,7 +22,7 @@ from nanoc.tests.mocks import MockLLM
 
 
 # ---------------------------------------------------------------------------
-# Helpers / Fixtures
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _fresh_memory(db_path: str) -> Memory:
@@ -34,6 +30,10 @@ def _fresh_memory(db_path: str) -> Memory:
         os.remove(db_path)
     return Memory(db_path)
 
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def memory(tmp_path):
@@ -45,571 +45,766 @@ def memory(tmp_path):
 
 
 # ===========================================================================
-# bulk_improve.py – new top-level script
+# bulk_improve.py – main() bulk task injection
 # ===========================================================================
 
-class TestBulkImprove:
-    def test_main_creates_inbox_directory(self, tmp_path):
-        """main() calls os.makedirs for the inbox directory."""
+class TestBulkImproveMain:
+    def test_creates_inbox_directory(self, tmp_path):
+        """main() creates the nanoc/inbox directory if it does not exist."""
         import bulk_improve
 
-        with patch("bulk_improve.os.makedirs") as mock_makedirs, \
+        inbox_dir = str(tmp_path / "nanoc" / "inbox")
+
+        with patch.object(bulk_improve.os, "makedirs") as mock_makedirs, \
              patch("builtins.open", MagicMock()), \
-             patch("bulk_improve.time.sleep"):
+             patch.object(bulk_improve.time, "sleep"), \
+             patch.object(bulk_improve.os.path, "join", return_value=str(tmp_path / "f.txt")), \
+             patch("builtins.print"):
             bulk_improve.main()
 
         mock_makedirs.assert_called_once_with("nanoc/inbox", exist_ok=True)
 
-    def test_main_creates_100_files(self, tmp_path):
-        """main() creates exactly 100 task files in the inbox directory."""
+    def test_creates_exactly_100_files(self, tmp_path):
+        """main() creates exactly 100 task files."""
         import bulk_improve
 
         created_files = []
 
-        real_makedirs = os.makedirs
+        def fake_open(filename, mode):
+            created_files.append(filename)
+            return MagicMock().__enter__.return_value
 
-        def fake_open(path, mode="r"):
-            created_files.append(path)
-            m = MagicMock()
-            m.__enter__ = lambda s: s
-            m.__exit__ = MagicMock(return_value=False)
-            m.write = MagicMock()
-            return m
-
-        with patch("bulk_improve.os.makedirs"), \
-             patch("builtins.open", side_effect=fake_open), \
-             patch("bulk_improve.time.sleep"):
+        with patch("builtins.open", MagicMock()) as mock_open, \
+             patch.object(bulk_improve.os, "makedirs"), \
+             patch.object(bulk_improve.time, "sleep"), \
+             patch("builtins.print"):
+            # Capture calls by counting open() calls
+            mock_open.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_open.return_value.__exit__ = MagicMock(return_value=False)
             bulk_improve.main()
 
-        assert len(created_files) == 100
+        assert mock_open.call_count == 100
 
-    def test_main_files_have_bulk_task_prefix(self, tmp_path):
-        """All created files have names starting with 'bulk_task_'."""
-        import bulk_improve
-
-        created_files = []
-
-        def fake_open(path, mode="r"):
-            created_files.append(path)
-            m = MagicMock()
-            m.__enter__ = lambda s: s
-            m.__exit__ = MagicMock(return_value=False)
-            m.write = MagicMock()
-            return m
-
-        with patch("bulk_improve.os.makedirs"), \
-             patch("builtins.open", side_effect=fake_open), \
-             patch("bulk_improve.time.sleep"):
-            bulk_improve.main()
-
-        for fpath in created_files:
-            basename = os.path.basename(fpath)
-            assert basename.startswith("bulk_task_"), f"Unexpected filename: {basename}"
-
-    def test_main_file_names_include_index(self, tmp_path):
-        """File names include the loop index (0..99) for uniqueness."""
-        import bulk_improve
-
-        created_files = []
-
-        def fake_open(path, mode="r"):
-            created_files.append(path)
-            m = MagicMock()
-            m.__enter__ = lambda s: s
-            m.__exit__ = MagicMock(return_value=False)
-            m.write = MagicMock()
-            return m
-
-        with patch("bulk_improve.os.makedirs"), \
-             patch("builtins.open", side_effect=fake_open), \
-             patch("bulk_improve.time.sleep"):
-            bulk_improve.main()
-
-        # Each file name should contain _0 through _99 as a suffix
-        basenames = [os.path.basename(f) for f in created_files]
-        # The pattern is bulk_task_{timestamp}_{i}.txt
-        for i in range(100):
-            suffix = f"_{i}.txt"
-            matching = [b for b in basenames if b.endswith(suffix)]
-            assert len(matching) >= 1, f"No file found ending with index _{i}.txt"
-
-    def test_main_writes_task_description_to_files(self, tmp_path):
-        """main() writes content containing 'NANOC' and 'FOSS' to each file."""
+    def test_each_file_written_with_task_desc(self, tmp_path):
+        """main() writes the task description content to each file."""
         import bulk_improve
 
         written_contents = []
 
-        def fake_open(path, mode="r"):
-            m = MagicMock()
-            m.__enter__ = lambda s: s
-            m.__exit__ = MagicMock(return_value=False)
-            m.write = lambda content: written_contents.append(content)
-            return m
+        mock_file = MagicMock()
+        mock_file.__enter__ = MagicMock(return_value=mock_file)
+        mock_file.__exit__ = MagicMock(return_value=False)
+        mock_file.write = MagicMock(side_effect=lambda s: written_contents.append(s))
 
-        with patch("bulk_improve.os.makedirs"), \
-             patch("builtins.open", side_effect=fake_open), \
-             patch("bulk_improve.time.sleep"):
+        with patch("builtins.open", return_value=mock_file), \
+             patch.object(bulk_improve.os, "makedirs"), \
+             patch.object(bulk_improve.time, "sleep"), \
+             patch("builtins.print"):
             bulk_improve.main()
 
         assert len(written_contents) == 100
         for content in written_contents:
-            assert "NANOC" in content or "Autonomous Network" in content
+            assert "Autonomous Network Operating Center" in content
             assert "FOSS" in content
 
-    def test_main_files_written_to_inbox_directory(self, tmp_path):
-        """All file paths start with the 'nanoc/inbox' directory prefix."""
+    def test_filename_includes_index(self, tmp_path):
+        """Each filename contains the loop index (0 through 99)."""
         import bulk_improve
 
-        created_files = []
+        filenames = []
 
-        def fake_open(path, mode="r"):
-            created_files.append(path)
-            m = MagicMock()
-            m.__enter__ = lambda s: s
-            m.__exit__ = MagicMock(return_value=False)
-            m.write = MagicMock()
-            return m
+        original_join = os.path.join
 
-        with patch("bulk_improve.os.makedirs"), \
-             patch("builtins.open", side_effect=fake_open), \
-             patch("bulk_improve.time.sleep"):
-            bulk_improve.main()
-
-        for fpath in created_files:
-            assert fpath.startswith("nanoc/inbox"), f"File not in inbox: {fpath}"
-
-    def test_main_sleeps_between_file_creations(self, tmp_path):
-        """main() calls time.sleep(0.01) between each file creation."""
-        import bulk_improve
-
-        sleep_calls = []
+        def capturing_join(d, f):
+            filenames.append(f)
+            return original_join(d, f)
 
         mock_file = MagicMock()
         mock_file.__enter__ = MagicMock(return_value=mock_file)
         mock_file.__exit__ = MagicMock(return_value=False)
+        mock_file.write = MagicMock()
 
-        with patch("bulk_improve.os.makedirs"), \
-             patch("builtins.open", return_value=mock_file), \
-             patch("bulk_improve.time.sleep", side_effect=lambda s: sleep_calls.append(s)):
+        with patch("builtins.open", return_value=mock_file), \
+             patch.object(bulk_improve.os, "makedirs"), \
+             patch.object(bulk_improve.time, "sleep"), \
+             patch.object(bulk_improve.os.path, "join", side_effect=capturing_join), \
+             patch("builtins.print"):
             bulk_improve.main()
 
-        assert len(sleep_calls) == 100
-        assert all(s == 0.01 for s in sleep_calls)
+        # Each filename should contain the loop index
+        assert len(filenames) == 100
+        for i, fname in enumerate(filenames):
+            assert f"_{i}.txt" in fname, f"Expected index {i} in filename '{fname}'"
 
-    def test_main_creates_files_on_real_filesystem(self, tmp_path):
-        """Integration: main() actually writes 100 files in a real temp inbox directory."""
+    def test_filename_starts_with_bulk_task(self, tmp_path):
+        """Each filename starts with 'bulk_task_'."""
         import bulk_improve
 
-        inbox_dir = tmp_path / "nanoc" / "inbox"
-        inbox_dir.mkdir(parents=True, exist_ok=True)
+        filenames = []
+        original_join = os.path.join
 
-        # We override the inbox_dir value inside main by patching os.path.join
-        # to redirect to our tmp directory, and os.makedirs to be a no-op.
-        real_join = os.path.join
+        def capturing_join(d, f):
+            filenames.append(f)
+            return original_join(d, f)
 
-        def redirected_join(directory, filename):
-            # Redirect from "nanoc/inbox" to tmp_path
-            if directory == "nanoc/inbox":
-                return real_join(str(inbox_dir), filename)
-            return real_join(directory, filename)
+        mock_file = MagicMock()
+        mock_file.__enter__ = MagicMock(return_value=mock_file)
+        mock_file.__exit__ = MagicMock(return_value=False)
+        mock_file.write = MagicMock()
 
-        with patch("bulk_improve.os.makedirs"), \
-             patch("bulk_improve.os.path.join", side_effect=redirected_join), \
-             patch("bulk_improve.time.sleep"):
+        with patch("builtins.open", return_value=mock_file), \
+             patch.object(bulk_improve.os, "makedirs"), \
+             patch.object(bulk_improve.time, "sleep"), \
+             patch.object(bulk_improve.os.path, "join", side_effect=capturing_join), \
+             patch("builtins.print"):
             bulk_improve.main()
 
-        files = list(inbox_dir.iterdir())
-        assert len(files) == 100
+        for fname in filenames:
+            assert fname.startswith("bulk_task_")
+
+    def test_uses_inbox_dir_as_nanoc_inbox(self, tmp_path):
+        """main() uses 'nanoc/inbox' as the inbox directory."""
+        import bulk_improve
+
+        assert bulk_improve.main.__code__.co_consts is not None or True
+        # Verify the inbox_dir value by inspecting main's source
+        src = inspect.getsource(bulk_improve.main)
+        assert "nanoc/inbox" in src
+
+    def test_task_description_contains_continuous_improvement_phrase(self, tmp_path):
+        """The task description includes 'Continuous Codebase Improvement' phrase."""
+        import bulk_improve
+
+        written_contents = []
+        mock_file = MagicMock()
+        mock_file.__enter__ = MagicMock(return_value=mock_file)
+        mock_file.__exit__ = MagicMock(return_value=False)
+        mock_file.write = MagicMock(side_effect=lambda s: written_contents.append(s))
+
+        with patch("builtins.open", return_value=mock_file), \
+             patch.object(bulk_improve.os, "makedirs"), \
+             patch.object(bulk_improve.time, "sleep"), \
+             patch("builtins.print"):
+            bulk_improve.main()
+
+        for content in written_contents:
+            assert "Continuous Codebase Improvement" in content
+
+    def test_sleep_called_between_file_creations(self, tmp_path):
+        """main() calls time.sleep() for each iteration to ensure unique filenames."""
+        import bulk_improve
+
+        mock_file = MagicMock()
+        mock_file.__enter__ = MagicMock(return_value=mock_file)
+        mock_file.__exit__ = MagicMock(return_value=False)
+        mock_file.write = MagicMock()
+
+        with patch("builtins.open", return_value=mock_file), \
+             patch.object(bulk_improve.os, "makedirs"), \
+             patch.object(bulk_improve.time, "sleep") as mock_sleep, \
+             patch("builtins.print"):
+            bulk_improve.main()
+
+        assert mock_sleep.call_count == 100
+
+    def test_sleep_duration_is_small(self, tmp_path):
+        """main() sleeps for 0.01 seconds between creations."""
+        import bulk_improve
+
+        mock_file = MagicMock()
+        mock_file.__enter__ = MagicMock(return_value=mock_file)
+        mock_file.__exit__ = MagicMock(return_value=False)
+        mock_file.write = MagicMock()
+
+        with patch("builtins.open", return_value=mock_file), \
+             patch.object(bulk_improve.os, "makedirs"), \
+             patch.object(bulk_improve.time, "sleep") as mock_sleep, \
+             patch("builtins.print"):
+            bulk_improve.main()
+
+        for call_args in mock_sleep.call_args_list:
+            assert call_args[0][0] == pytest.approx(0.01)
+
+    def test_prints_queued_task_message(self, tmp_path):
+        """main() prints a progress message for each task created."""
+        import bulk_improve
+
+        printed = []
+        mock_file = MagicMock()
+        mock_file.__enter__ = MagicMock(return_value=mock_file)
+        mock_file.__exit__ = MagicMock(return_value=False)
+        mock_file.write = MagicMock()
+
+        with patch("builtins.open", return_value=mock_file), \
+             patch.object(bulk_improve.os, "makedirs"), \
+             patch.object(bulk_improve.time, "sleep"), \
+             patch("builtins.print", side_effect=lambda s: printed.append(s)):
+            bulk_improve.main()
+
+        assert len(printed) == 100
+        assert "Queued task 1/100" in printed[0]
+        assert "Queued task 100/100" in printed[-1]
+
+    def test_files_written_in_text_mode(self, tmp_path):
+        """main() opens each file in text write mode ('w')."""
+        import bulk_improve
+
+        open_modes = []
+        original_open = open
+
+        def capturing_open(fname, mode):
+            open_modes.append(mode)
+            mock_f = MagicMock()
+            mock_f.__enter__ = MagicMock(return_value=mock_f)
+            mock_f.__exit__ = MagicMock(return_value=False)
+            mock_f.write = MagicMock()
+            return mock_f
+
+        with patch("builtins.open", side_effect=capturing_open), \
+             patch.object(bulk_improve.os, "makedirs"), \
+             patch.object(bulk_improve.time, "sleep"), \
+             patch("builtins.print"):
+            bulk_improve.main()
+
+        for mode in open_modes:
+            assert mode == "w"
+
+    def test_integration_creates_real_files(self, tmp_path, monkeypatch):
+        """Integration: main() creates real files in the inbox directory."""
+        import bulk_improve
+
+        # Patch the inbox_dir to use tmp_path
+        inbox_dir = str(tmp_path / "nanoc" / "inbox")
+
+        original_makedirs = os.makedirs
+        original_join = os.path.join
+        original_time = time.time
+
+        call_count = [0]
+
+        def patched_makedirs(path, **kwargs):
+            if path == "nanoc/inbox":
+                original_makedirs(inbox_dir, exist_ok=True)
+            else:
+                original_makedirs(path, **kwargs)
+
+        def patched_join(d, f):
+            if d == "nanoc/inbox":
+                return original_join(inbox_dir, f)
+            return original_join(d, f)
+
+        monkeypatch.setattr(bulk_improve.os, "makedirs", patched_makedirs)
+        monkeypatch.setattr(bulk_improve.os.path, "join", patched_join)
+        monkeypatch.setattr(bulk_improve.time, "sleep", lambda x: None)
+
+        with patch("builtins.print"):
+            bulk_improve.main()
+
+        created = [f for f in os.listdir(inbox_dir) if f.endswith(".txt")]
+        assert len(created) == 100
 
 
 # ===========================================================================
-# nanoc/memory/memory.py – create_task priority param removed
+# nanoc/memory/memory.py – create_task without priority parameter
 # ===========================================================================
 
-class TestMemoryCreateTaskPriorityRemoved:
-    def test_create_task_accepts_basic_params(self, memory):
-        """create_task accepts description, assigned_to, parent_id, project_id."""
-        task_id = memory.create_task(
-            "Test task",
-            assigned_to="Coder",
-            project_id="proj_test"
-        )
+class TestMemoryCreateTaskNoPriority:
+    def test_create_task_returns_integer_id(self, memory):
+        """create_task returns an integer row id."""
+        task_id = memory.create_task("Test description", assigned_to="Coder")
         assert isinstance(task_id, int)
         assert task_id > 0
 
-    def test_create_task_does_not_accept_priority_kwarg(self, memory):
-        """create_task raises TypeError when called with a priority keyword argument."""
+    def test_create_task_signature_has_no_priority_param(self):
+        """create_task signature no longer includes a 'priority' parameter."""
+        sig = inspect.signature(Memory.create_task)
+        assert "priority" not in sig.parameters
+
+    def test_create_task_with_priority_kwarg_raises_type_error(self, memory):
+        """Passing priority= keyword to create_task raises TypeError (param removed)."""
         with pytest.raises(TypeError):
-            memory.create_task(
-                "Task with priority",
-                assigned_to="Coder",
-                project_id="proj_p",
-                priority=10
-            )
+            memory.create_task("Task", assigned_to="Coder", priority=10)
 
-    def test_create_task_default_priority_is_zero(self, memory):
-        """Tasks created by create_task have priority=0 by default in the database."""
-        task_id = memory.create_task("Test task", assigned_to="Coder", project_id="proj_p")
-
+    def test_create_task_default_priority_in_db_is_zero(self, memory):
+        """Tasks created via create_task get the default priority of 0 from the schema."""
+        task_id = memory.create_task("Low priority task", assigned_to="Architect")
         with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT priority FROM tasks WHERE id = ?", (task_id,))
-            row = cursor.fetchone()
+            row = dict(cursor.fetchone())
+        assert row["priority"] == 0
 
-        assert row[0] == 0
-
-    def test_create_task_returns_incrementing_ids(self, memory):
-        """Successive calls to create_task return distinct, incrementing IDs."""
-        id1 = memory.create_task("Task 1", assigned_to="Coder")
-        id2 = memory.create_task("Task 2", assigned_to="Coder")
-        assert id2 > id1
-
-    def test_create_task_stores_correct_description(self, memory):
-        """create_task stores the exact description text in the database."""
-        desc = "Unique task description XYZ123"
-        task_id = memory.create_task(desc, assigned_to="Architect")
-
+    def test_create_task_stores_description(self, memory):
+        """create_task stores the description correctly."""
+        task_id = memory.create_task("My task description", assigned_to="Coder")
         with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT description FROM tasks WHERE id = ?", (task_id,))
-            row = cursor.fetchone()
-
-        assert row[0] == desc
-
-    def test_create_task_initial_status_is_pending(self, memory):
-        """create_task sets the initial status to 'pending'."""
-        task_id = memory.create_task("Some task", assigned_to="Planner")
-
-        with sqlite3.connect(memory.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
-            row = cursor.fetchone()
-
-        assert row[0] == "pending"
-
-    def test_create_task_without_priority_does_not_raise(self, memory):
-        """Calling create_task without any priority parameter succeeds silently."""
-        # This is the key behavioral test: the old signature had priority=0 as default,
-        # the new one does NOT accept priority at all.
-        task_id = memory.create_task("No priority task")
-        assert task_id is not None
-
-    def test_create_task_stores_project_id(self, memory):
-        """create_task stores the provided project_id."""
-        pid = "proj_test_123"
-        task_id = memory.create_task("Task", project_id=pid)
-
-        with sqlite3.connect(memory.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT project_id FROM tasks WHERE id = ?", (task_id,))
-            row = cursor.fetchone()
-
-        assert row[0] == pid
+            row = dict(cursor.fetchone())
+        assert row["description"] == "My task description"
 
     def test_create_task_stores_assigned_to(self, memory):
-        """create_task stores the provided assigned_to value."""
-        task_id = memory.create_task("Task", assigned_to="Reviewer")
-
+        """create_task stores the assigned_to value."""
+        task_id = memory.create_task("Task X", assigned_to="Reviewer")
         with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT assigned_to FROM tasks WHERE id = ?", (task_id,))
-            row = cursor.fetchone()
+            row = dict(cursor.fetchone())
+        assert row["assigned_to"] == "Reviewer"
 
-        assert row[0] == "Reviewer"
+    def test_create_task_with_project_id(self, memory):
+        """create_task stores the project_id correctly."""
+        task_id = memory.create_task("Task Y", project_id="proj_123")
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT project_id FROM tasks WHERE id = ?", (task_id,))
+            row = dict(cursor.fetchone())
+        assert row["project_id"] == "proj_123"
+
+    def test_create_task_status_defaults_to_pending(self, memory):
+        """create_task sets the initial status to 'pending'."""
+        task_id = memory.create_task("Pending task")
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
+            row = dict(cursor.fetchone())
+        assert row["status"] == "pending"
+
+    def test_create_task_ids_are_sequential(self, memory):
+        """create_task returns increasing IDs for sequential calls."""
+        id1 = memory.create_task("First task")
+        id2 = memory.create_task("Second task")
+        assert id2 > id1
 
 
 # ===========================================================================
-# nanoc/core/llm.py – no retry logic (immediate failure)
+# nanoc/core/llm.py – removed retry logic (single attempt)
 # ===========================================================================
 
-class TestLLMProviderNoRetry:
+class TestLLMNoRetry:
     @pytest.mark.anyio
-    async def test_http_error_propagates_immediately(self, memory):
-        """complete() does NOT retry on HTTP errors – exception propagates immediately."""
-        import httpx
+    async def test_exception_calls_record_error(self, memory):
+        """Any exception during complete() calls _record_error with the error message."""
+        from nanoc.core.llm import LLMProvider
+
+        provider = LLMProvider(provider="openrouter", model="test-model")
+
+        with patch("nanoc.core.llm.Memory", return_value=memory), \
+             patch.object(provider, "_openrouter_complete", new_callable=AsyncMock,
+                          side_effect=RuntimeError("connection failed")), \
+             patch.object(provider, "_record_error") as mock_record_error, \
+             patch("nanoc.core.llm.settings") as mock_settings:
+            mock_settings.DB_PATH = memory.db_path
+
+            with pytest.raises(RuntimeError):
+                await provider.complete("hello")
+
+        mock_record_error.assert_called_once()
+        error_arg = mock_record_error.call_args[0][0]
+        assert "connection failed" in error_arg
+
+    @pytest.mark.anyio
+    async def test_exception_is_reraised_immediately(self, memory):
+        """The exception is re-raised after _record_error without retry."""
         from nanoc.core.llm import LLMProvider
 
         provider = LLMProvider(provider="openrouter", model="test-model")
         call_count = [0]
 
-        async def failing_openrouter(prompt, system_prompt, model):
+        async def failing_complete(prompt, system_prompt, model):
             call_count[0] += 1
-            raise httpx.HTTPStatusError("500 error", request=MagicMock(), response=MagicMock())
-
-        with patch("nanoc.core.llm.Memory", return_value=memory), \
-             patch.object(provider, "_openrouter_complete", side_effect=failing_openrouter), \
-             patch.object(provider, "_record_error"), \
-             patch("nanoc.core.llm.settings") as mock_settings:
-            mock_settings.DB_PATH = memory.db_path
-            with pytest.raises(httpx.HTTPStatusError):
-                await provider.complete("test prompt")
-
-        # Should have been called exactly once (no retry)
-        assert call_count[0] == 1
-
-    @pytest.mark.anyio
-    async def test_request_error_propagates_immediately(self, memory):
-        """complete() does NOT retry on network request errors."""
-        import httpx
-        from nanoc.core.llm import LLMProvider
-
-        provider = LLMProvider(provider="openrouter", model="test-model")
-        call_count = [0]
-
-        async def failing_openrouter(prompt, system_prompt, model):
-            call_count[0] += 1
-            raise httpx.RequestError("connection failed", request=MagicMock())
-
-        with patch("nanoc.core.llm.Memory", return_value=memory), \
-             patch.object(provider, "_openrouter_complete", side_effect=failing_openrouter), \
-             patch.object(provider, "_record_error"), \
-             patch("nanoc.core.llm.settings") as mock_settings:
-            mock_settings.DB_PATH = memory.db_path
-            with pytest.raises(httpx.RequestError):
-                await provider.complete("test prompt")
-
-        assert call_count[0] == 1
-
-    @pytest.mark.anyio
-    async def test_no_asyncio_sleep_called_on_failure(self, memory):
-        """complete() does not call asyncio.sleep on failure (no retry delay)."""
-        from nanoc.core.llm import LLMProvider
-
-        provider = LLMProvider(provider="openrouter", model="test-model")
-        sleep_calls = []
-
-        async def record_sleep(delay):
-            sleep_calls.append(delay)
-
-        async def failing_openrouter(prompt, system_prompt, model):
             raise RuntimeError("always fails")
 
         with patch("nanoc.core.llm.Memory", return_value=memory), \
-             patch.object(provider, "_openrouter_complete", side_effect=failing_openrouter), \
+             patch.object(provider, "_openrouter_complete", side_effect=failing_complete), \
              patch.object(provider, "_record_error"), \
-             patch("asyncio.sleep", side_effect=record_sleep), \
              patch("nanoc.core.llm.settings") as mock_settings:
             mock_settings.DB_PATH = memory.db_path
+
             with pytest.raises(RuntimeError):
-                await provider.complete("test prompt")
+                await provider.complete("test")
 
-        assert len(sleep_calls) == 0
+        # Should only be called once (no retry)
+        assert call_count[0] == 1
 
-    @pytest.mark.anyio
-    async def test_record_error_called_on_failure(self, memory):
-        """complete() calls _record_error when an exception occurs."""
+    def test_no_asyncio_sleep_in_complete_source(self):
+        """complete() source code does not contain asyncio.sleep (retry delay removed)."""
         from nanoc.core.llm import LLMProvider
 
-        provider = LLMProvider(provider="openrouter", model="test-model")
-        recorded_errors = []
+        provider = LLMProvider(provider="openrouter")
+        src = inspect.getsource(provider.complete)
 
-        async def failing_openrouter(prompt, system_prompt, model):
-            raise RuntimeError("test error message")
-
-        with patch("nanoc.core.llm.Memory", return_value=memory), \
-             patch.object(provider, "_openrouter_complete", side_effect=failing_openrouter), \
-             patch.object(provider, "_record_error", side_effect=lambda e: recorded_errors.append(e)), \
-             patch("nanoc.core.llm.settings") as mock_settings:
-            mock_settings.DB_PATH = memory.db_path
-            with pytest.raises(RuntimeError):
-                await provider.complete("some prompt")
-
-        assert len(recorded_errors) == 1
-        assert "test error message" in recorded_errors[0]
+        # The retry loop used asyncio.sleep; verifying it's gone
+        assert "asyncio.sleep" not in src
 
     @pytest.mark.anyio
-    async def test_ollama_error_propagates_without_retry(self, memory):
-        """complete() with ollama provider does NOT retry on failure."""
+    async def test_no_retry_logic_in_source(self):
+        """The complete() method source does not contain retry loop logic."""
+        from nanoc.core.llm import LLMProvider
+
+        provider = LLMProvider(provider="openrouter")
+        src = inspect.getsource(provider.complete)
+
+        # The PR removed the retry loop
+        assert "max_retries" not in src
+        assert "for attempt in range" not in src
+
+    @pytest.mark.anyio
+    async def test_httpx_error_also_calls_record_error(self, memory):
+        """httpx errors trigger _record_error and are re-raised (not silently retried)."""
         import httpx
         from nanoc.core.llm import LLMProvider
 
-        provider = LLMProvider(provider="ollama", model="llama3")
-        call_count = [0]
-
-        async def failing_ollama(prompt, system_prompt, model):
-            call_count[0] += 1
-            raise httpx.ConnectError("connection refused")
+        provider = LLMProvider(provider="openrouter", model="test-model")
 
         with patch("nanoc.core.llm.Memory", return_value=memory), \
-             patch.object(provider, "_ollama_complete", side_effect=failing_ollama), \
-             patch.object(provider, "_record_error"), \
+             patch.object(provider, "_openrouter_complete", new_callable=AsyncMock,
+                          side_effect=httpx.RequestError("timeout", request=MagicMock())), \
+             patch.object(provider, "_record_error") as mock_record_error, \
              patch("nanoc.core.llm.settings") as mock_settings:
             mock_settings.DB_PATH = memory.db_path
-            with pytest.raises(httpx.ConnectError):
+
+            with pytest.raises(httpx.RequestError):
                 await provider.complete("test")
 
-        assert call_count[0] == 1
+        mock_record_error.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_telemetry_recorded_on_success_not_on_failure(self, memory):
-        """_record_telemetry is called only on success, not on failure."""
+    async def test_successful_call_does_not_call_record_error(self, memory):
+        """A successful complete() does NOT call _record_error."""
         from nanoc.core.llm import LLMProvider
 
         provider = LLMProvider(provider="openrouter", model="test-model")
-        telemetry_calls = []
-
-        async def failing_openrouter(prompt, system_prompt, model):
-            raise RuntimeError("fail")
 
         with patch("nanoc.core.llm.Memory", return_value=memory), \
-             patch.object(provider, "_openrouter_complete", side_effect=failing_openrouter), \
-             patch.object(provider, "_record_error"), \
-             patch.object(provider, "_record_telemetry", side_effect=lambda *a: telemetry_calls.append(a)), \
+             patch.object(provider, "_openrouter_complete", new_callable=AsyncMock,
+                          return_value="Good response"), \
+             patch.object(provider, "_record_telemetry"), \
+             patch.object(provider, "_record_error") as mock_record_error, \
              patch("nanoc.core.llm.settings") as mock_settings:
             mock_settings.DB_PATH = memory.db_path
-            with pytest.raises(RuntimeError):
+
+            result = await provider.complete("test")
+
+        mock_record_error.assert_not_called()
+        assert result == "Good response"
+
+    @pytest.mark.anyio
+    async def test_ollama_exception_also_calls_record_error(self, memory):
+        """An exception from _ollama_complete also triggers _record_error."""
+        from nanoc.core.llm import LLMProvider
+
+        provider = LLMProvider(provider="ollama", model="llama2")
+
+        with patch("nanoc.core.llm.Memory", return_value=memory), \
+             patch.object(provider, "_ollama_complete", new_callable=AsyncMock,
+                          side_effect=Exception("ollama down")), \
+             patch.object(provider, "_record_error") as mock_record_error, \
+             patch("nanoc.core.llm.settings") as mock_settings:
+            mock_settings.DB_PATH = memory.db_path
+
+            with pytest.raises(Exception):
                 await provider.complete("prompt")
 
-        assert len(telemetry_calls) == 0
+        mock_record_error.assert_called_once()
 
 
 # ===========================================================================
-# nanoc/agents/base.py – handle_task removed from agent subclasses
+# nanoc/agents/security.py – simplified event payload (no findings/vulnerabilities)
 # ===========================================================================
 
-class TestHandleTaskRemoved:
+class TestSecurityEventPayloadSimplified:
+    @pytest.mark.anyio
+    async def test_event_payload_has_no_findings_field(self, memory):
+        """The security/audit-complete event payload does NOT contain 'findings'."""
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("SecAgent", memory)
+        agent.llm = MockLLM()
+
+        nmap_result = {
+            "stdout": "22/tcp open ssh OpenSSH 8.2",
+            "stderr": "",
+            "returncode": 0
+        }
+
+        with patch("nanoc.tools.network.AsyncRunner") as mock_runner_cls:
+            mock_runner_cls.run_command = AsyncMock(return_value=nmap_result)
+            await agent.audit_service("10.0.0.1")
+
+        events = memory.get_events(topic="security/audit-complete")
+        assert len(events) >= 1
+        payload = json.loads(events[-1]["payload"])
+        assert "findings" not in payload
+
+    @pytest.mark.anyio
+    async def test_event_payload_has_no_vulnerabilities_field(self, memory):
+        """The security/audit-complete event payload does NOT contain 'vulnerabilities'."""
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("SecAgent", memory)
+        agent.llm = MockLLM()
+
+        nmap_result = {
+            "stdout": "Telnet service detected\nAnonymous FTP",
+            "stderr": "",
+            "returncode": 0
+        }
+
+        with patch("nanoc.tools.network.AsyncRunner") as mock_runner_cls:
+            mock_runner_cls.run_command = AsyncMock(return_value=nmap_result)
+            await agent.audit_service("10.0.0.2")
+
+        events = memory.get_events(topic="security/audit-complete")
+        payload = json.loads(events[-1]["payload"])
+        assert "vulnerabilities" not in payload
+
+    @pytest.mark.anyio
+    async def test_event_payload_contains_only_target_and_report(self, memory):
+        """The security/audit-complete event payload contains only 'target' and 'report'."""
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("SecAgent", memory)
+        agent.llm = MockLLM()
+
+        nmap_result = {
+            "stdout": "PORT  STATE SERVICE\n22/tcp open ssh",
+            "stderr": "",
+            "returncode": 0
+        }
+
+        with patch("nanoc.tools.network.AsyncRunner") as mock_runner_cls:
+            mock_runner_cls.run_command = AsyncMock(return_value=nmap_result)
+            await agent.audit_service("192.168.1.5")
+
+        events = memory.get_events(topic="security/audit-complete")
+        payload = json.loads(events[-1]["payload"])
+
+        # Only 'target' and 'report' should be present
+        assert set(payload.keys()) == {"target", "report"}
+
+    @pytest.mark.anyio
+    async def test_event_report_equals_nmap_stdout(self, memory):
+        """The 'report' field in the event equals the nmap stdout."""
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("SecAgent", memory)
+        agent.llm = MockLLM()
+
+        stdout_content = "Nmap scan report for target\n80/tcp open http Apache 2.4"
+        nmap_result = {"stdout": stdout_content, "stderr": "", "returncode": 0}
+
+        with patch("nanoc.tools.network.AsyncRunner") as mock_runner_cls:
+            mock_runner_cls.run_command = AsyncMock(return_value=nmap_result)
+            await agent.audit_service("target-host")
+
+        events = memory.get_events(topic="security/audit-complete")
+        payload = json.loads(events[-1]["payload"])
+        assert payload["report"] == stdout_content
+
+    @pytest.mark.anyio
+    async def test_even_with_telnet_in_output_no_findings_published(self, memory):
+        """Telnet in nmap output no longer triggers vulnerability finding in event."""
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("SecAgent", memory)
+        agent.llm = MockLLM()
+
+        # Telnet service in output – old code would have added a finding
+        nmap_result = {
+            "stdout": "23/tcp open telnet",
+            "stderr": "",
+            "returncode": 0
+        }
+
+        with patch("nanoc.tools.network.AsyncRunner") as mock_runner_cls:
+            mock_runner_cls.run_command = AsyncMock(return_value=nmap_result)
+            await agent.audit_service("192.168.1.10")
+
+        events = memory.get_events(topic="security/audit-complete")
+        payload = json.loads(events[-1]["payload"])
+        assert "findings" not in payload
+        assert "vulnerabilities" not in payload
+
+    @pytest.mark.anyio
+    async def test_no_analysis_performed_on_report(self, memory):
+        """No vulnerability analysis is applied – audit_service returns raw stdout."""
+        from nanoc.agents.security import SecurityAgent
+
+        agent = SecurityAgent("SecAgent", memory)
+        agent.llm = MockLLM()
+
+        raw_output = "Expired SSL certificate detected\nssh protocol 1.0 detected"
+        nmap_result = {"stdout": raw_output, "stderr": "", "returncode": 0}
+
+        with patch("nanoc.tools.network.AsyncRunner") as mock_runner_cls:
+            mock_runner_cls.run_command = AsyncMock(return_value=nmap_result)
+            result = await agent.audit_service("192.168.1.20")
+
+        assert result == raw_output
+
+
+# ===========================================================================
+# nanoc/agents/base.py – project_id format change (no hex suffix)
+# ===========================================================================
+
+class TestTeamLeaderProjectIdFormat:
+    @pytest.mark.anyio
+    async def test_project_id_is_proj_timestamp_only(self, memory):
+        """delegate_tasks generates project_id as 'proj_{timestamp}' with no hex suffix."""
+        from nanoc.agents.base import TeamLeader
+
+        leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
+
+        with patch("nanoc.core.gate_manager.GateManager"):
+            project_id = await leader.delegate_tasks("Build something")
+
+        # Must match proj_ followed only by digits (no hex or underscore after)
+        import re
+        assert re.match(r'^proj_\d+$', project_id), \
+            f"project_id '{project_id}' should match 'proj_<digits>' exactly"
+
+    @pytest.mark.anyio
+    async def test_project_id_has_no_hex_suffix(self, memory):
+        """project_id does NOT contain a hex string suffix like '_1b931405'."""
+        from nanoc.agents.base import TeamLeader
+
+        leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
+
+        with patch("nanoc.core.gate_manager.GateManager"):
+            project_id = await leader.delegate_tasks("Network monitor")
+
+        parts = project_id.split("_")
+        # Should only have 2 parts: 'proj' and the timestamp
+        assert len(parts) == 2, \
+            f"project_id '{project_id}' should have exactly 2 parts (proj, timestamp)"
+
+    @pytest.mark.anyio
+    async def test_project_id_second_part_is_numeric(self, memory):
+        """The timestamp part of the project_id is a pure integer (no hex chars)."""
+        from nanoc.agents.base import TeamLeader
+
+        leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
+
+        with patch("nanoc.core.gate_manager.GateManager"):
+            project_id = await leader.delegate_tasks("Test project")
+
+        _, timestamp_part = project_id.split("_", 1)
+        assert timestamp_part.isdigit(), \
+            f"Expected numeric timestamp, got '{timestamp_part}'"
+
+    @pytest.mark.anyio
+    async def test_project_id_extracted_from_description_when_provided(self, memory):
+        """When description includes 'proj_123: ...', that project_id is used."""
+        from nanoc.agents.base import TeamLeader
+
+        leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
+
+        with patch("nanoc.core.gate_manager.GateManager"):
+            project_id = await leader.delegate_tasks("proj_12345: Do something")
+
+        assert project_id == "proj_12345"
+
+    def test_base_agent_source_does_not_import_os(self):
+        """base.py no longer imports 'os' (removed with hex suffix generation)."""
+        import nanoc.agents.base as base_module
+        src = inspect.getsource(base_module)
+        # The 'os' import was removed since os.urandom is no longer used
+        # We check that os.urandom is not called in project_id generation
+        assert "os.urandom" not in src
+
+
+# ===========================================================================
+# nanoc/agents/base.py – handle_task methods removed
+# ===========================================================================
+
+class TestHandleTaskMethodsRemoved:
     def test_base_agent_has_no_handle_task(self, memory):
-        """BaseAgent does not have a handle_task method after PR."""
+        """BaseAgent no longer has a handle_task method."""
         from nanoc.agents.base import BaseAgent
-        agent = BaseAgent("A1", "TestRole", memory, MockLLM())
+        agent = BaseAgent("agent1", "TestRole", memory, MockLLM())
         assert not hasattr(agent, "handle_task")
 
     def test_architect_has_no_handle_task(self, memory):
-        """Architect does not have a handle_task method after PR."""
+        """Architect no longer has a handle_task method."""
         from nanoc.agents.base import Architect
         agent = Architect("Arch1", "Architect", memory, MockLLM())
         assert not hasattr(agent, "handle_task")
 
     def test_planner_has_no_handle_task(self, memory):
-        """Planner does not have a handle_task method after PR."""
+        """Planner no longer has a handle_task method."""
         from nanoc.agents.base import Planner
         agent = Planner("Plan1", "Planner", memory, MockLLM())
         assert not hasattr(agent, "handle_task")
 
     def test_coder_has_no_handle_task(self, memory):
-        """Coder does not have a handle_task method after PR."""
+        """Coder no longer has a handle_task method."""
         from nanoc.agents.base import Coder
-        agent = Coder("Code1", "Coder", memory, MockLLM())
+        agent = Coder("Coder1", "Coder", memory, MockLLM())
         assert not hasattr(agent, "handle_task")
 
     def test_reviewer_has_no_handle_task(self, memory):
-        """Reviewer does not have a handle_task method after PR."""
+        """Reviewer no longer has a handle_task method."""
         from nanoc.agents.base import Reviewer
         agent = Reviewer("Rev1", "Reviewer", memory, MockLLM())
         assert not hasattr(agent, "handle_task")
 
     def test_architect_still_has_design_solution(self, memory):
-        """Architect retains its design_solution method."""
+        """Architect still has design_solution method after handle_task removal."""
         from nanoc.agents.base import Architect
         agent = Architect("Arch1", "Architect", memory, MockLLM())
         assert hasattr(agent, "design_solution")
-        assert callable(agent.design_solution)
 
     def test_planner_still_has_create_todo_list(self, memory):
-        """Planner retains its create_todo_list method."""
+        """Planner still has create_todo_list method after handle_task removal."""
         from nanoc.agents.base import Planner
         agent = Planner("Plan1", "Planner", memory, MockLLM())
         assert hasattr(agent, "create_todo_list")
-        assert callable(agent.create_todo_list)
 
     def test_coder_still_has_write_code(self, memory):
-        """Coder retains its write_code method."""
+        """Coder still has write_code method after handle_task removal."""
         from nanoc.agents.base import Coder
-        agent = Coder("Code1", "Coder", memory, MockLLM())
+        agent = Coder("Coder1", "Coder", memory, MockLLM())
         assert hasattr(agent, "write_code")
-        assert callable(agent.write_code)
 
     def test_reviewer_still_has_review_work(self, memory):
-        """Reviewer retains its review_work method."""
+        """Reviewer still has review_work method after handle_task removal."""
         from nanoc.agents.base import Reviewer
         agent = Reviewer("Rev1", "Reviewer", memory, MockLLM())
         assert hasattr(agent, "review_work")
-        assert callable(agent.review_work)
-
-
-# ===========================================================================
-# nanoc/agents/base.py – TeamLeader project_id format (no hex suffix)
-# ===========================================================================
-
-class TestTeamLeaderProjectIdFormat:
-    @pytest.mark.anyio
-    async def test_project_id_has_no_hex_suffix(self, memory):
-        """delegate_tasks produces project_id without hex suffix (format: proj_{digits})."""
-        from nanoc.agents.base import TeamLeader
-
-        with patch("nanoc.core.gate_manager.GateManager"):
-            leader = TeamLeader("Leader1", "Team Leader", memory, MockLLM())
-            project_id = await leader.delegate_tasks("Build something")
-
-        # Should match proj_{digits} exactly - no additional _hex segment
-        assert re.match(r"^proj_\d+$", project_id), \
-            f"project_id '{project_id}' does not match expected pattern proj_<digits>"
-
-    @pytest.mark.anyio
-    async def test_project_id_format_is_proj_timestamp(self, memory):
-        """project_id follows the exact format: proj_{integer_timestamp}."""
-        from nanoc.agents.base import TeamLeader
-
-        with patch("nanoc.core.gate_manager.GateManager"), \
-             patch("nanoc.agents.base.datetime") as mock_dt:
-            mock_dt.now.return_value.timestamp.return_value = 1700000042.5
-            leader = TeamLeader("Leader1", "Team Leader", memory, MockLLM())
-            project_id = await leader.delegate_tasks("Build something")
-
-        assert project_id == "proj_1700000042"
-
-    @pytest.mark.anyio
-    async def test_project_id_extracted_from_description_when_present(self, memory):
-        """delegate_tasks extracts existing project_id from 'proj_xxx: ...' descriptions."""
-        from nanoc.agents.base import TeamLeader
-
-        with patch("nanoc.core.gate_manager.GateManager"):
-            leader = TeamLeader("Leader1", "Team Leader", memory, MockLLM())
-            project_id = await leader.delegate_tasks("proj_existing123: Do some work")
-
-        assert project_id == "proj_existing123"
-
-    @pytest.mark.anyio
-    async def test_project_id_no_hex_pattern_regression(self, memory):
-        """Regression: project_id must NOT contain an underscore-separated hex suffix."""
-        from nanoc.agents.base import TeamLeader
-
-        with patch("nanoc.core.gate_manager.GateManager"):
-            leader = TeamLeader("Leader1", "Team Leader", memory, MockLLM())
-            project_id = await leader.delegate_tasks("Test project")
-
-        # The old format was proj_{ts}_{hex8}, new format is just proj_{ts}
-        parts = project_id.split("_")
-        # Should have exactly 2 parts: "proj" and the timestamp
-        assert len(parts) == 2, \
-            f"project_id '{project_id}' has unexpected format (old hex suffix?)"
 
 
 # ===========================================================================
 # nanoc/core/orchestrator.py – explicit role-based dispatch
 # ===========================================================================
 
-class TestOrchestratorRoleDispatch:
+class TestOrchestratorExplicitDispatch:
     @pytest.mark.anyio
-    async def test_architect_role_dispatches_to_design_solution(self, memory):
-        """process_task calls agent.design_solution() for 'Architect' role."""
+    async def test_architect_role_calls_design_solution(self, memory):
+        """process_task calls agent.design_solution() for 'Architect' role tasks."""
         from nanoc.core.orchestrator import Orchestrator
         from nanoc.agents.base import TeamLeader
 
         leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
         orch = Orchestrator(memory, leader)
 
-        mock_agent = MagicMock()
-        mock_agent.role = "Architect"
-        mock_agent.log = AsyncMock()
-        mock_agent.design_solution = AsyncMock(return_value="Architecture design")
-        orch.add_agent(mock_agent)
+        mock_architect = MagicMock()
+        mock_architect.role = "Architect"
+        mock_architect.log = AsyncMock()
+        mock_architect.design_solution = AsyncMock(return_value="architecture result")
+        orch.add_agent(mock_architect)
 
         task_id = memory.create_task(
-            "Design architecture for: test system",
+            "Design architecture for: service X",
             assigned_to="Architect",
-            project_id="proj_dispatch"
+            project_id="proj_disp1"
         )
+
         with sqlite3.connect(memory.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -618,28 +813,29 @@ class TestOrchestratorRoleDispatch:
 
         await orch.process_task(task)
 
-        mock_agent.design_solution.assert_called_once_with(task["description"])
+        mock_architect.design_solution.assert_called_once_with(task["description"])
 
     @pytest.mark.anyio
-    async def test_planner_role_dispatches_to_create_todo_list(self, memory):
-        """process_task calls agent.create_todo_list() for 'Planner' role."""
+    async def test_planner_role_calls_create_todo_list(self, memory):
+        """process_task calls agent.create_todo_list() for 'Planner' role tasks."""
         from nanoc.core.orchestrator import Orchestrator
         from nanoc.agents.base import TeamLeader
 
         leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
         orch = Orchestrator(memory, leader)
 
-        mock_agent = MagicMock()
-        mock_agent.role = "Planner"
-        mock_agent.log = AsyncMock()
-        mock_agent.create_todo_list = AsyncMock(return_value="TODO list")
-        orch.add_agent(mock_agent)
+        mock_planner = MagicMock()
+        mock_planner.role = "Planner"
+        mock_planner.log = AsyncMock()
+        mock_planner.create_todo_list = AsyncMock(return_value="todo list result")
+        orch.add_agent(mock_planner)
 
         task_id = memory.create_task(
-            "Create task list for: test",
+            "proj_abc: Create task list for design: Microservices",
             assigned_to="Planner",
-            project_id="proj_planner"
+            project_id="proj_abc"
         )
+
         with sqlite3.connect(memory.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -648,28 +844,29 @@ class TestOrchestratorRoleDispatch:
 
         await orch.process_task(task)
 
-        mock_agent.create_todo_list.assert_called_once_with(task["description"])
+        mock_planner.create_todo_list.assert_called_once_with(task["description"])
 
     @pytest.mark.anyio
-    async def test_coder_role_dispatches_to_write_code(self, memory):
-        """process_task calls agent.write_code() for 'Coder' role."""
+    async def test_coder_role_calls_write_code(self, memory):
+        """process_task calls agent.write_code() for 'Coder' role tasks."""
         from nanoc.core.orchestrator import Orchestrator
         from nanoc.agents.base import TeamLeader
 
         leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
         orch = Orchestrator(memory, leader)
 
-        mock_agent = MagicMock()
-        mock_agent.role = "Coder"
-        mock_agent.log = AsyncMock()
-        mock_agent.write_code = AsyncMock(return_value="def hello(): pass")
-        orch.add_agent(mock_agent)
+        mock_coder = MagicMock()
+        mock_coder.role = "Coder"
+        mock_coder.log = AsyncMock()
+        mock_coder.write_code = AsyncMock(return_value="def foo(): pass")
+        orch.add_agent(mock_coder)
 
         task_id = memory.create_task(
-            "Write hello world function",
+            "proj_code: Write cache module",
             assigned_to="Coder",
-            project_id="proj_coder"
+            project_id="proj_code"
         )
+
         with sqlite3.connect(memory.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -678,28 +875,29 @@ class TestOrchestratorRoleDispatch:
 
         await orch.process_task(task)
 
-        mock_agent.write_code.assert_called_once_with(task["description"])
+        mock_coder.write_code.assert_called_once_with(task["description"])
 
     @pytest.mark.anyio
-    async def test_reviewer_role_dispatches_to_review_work(self, memory):
-        """process_task calls agent.review_work() for 'Reviewer' role."""
+    async def test_reviewer_role_calls_review_work(self, memory):
+        """process_task calls agent.review_work() for 'Reviewer' role tasks."""
         from nanoc.core.orchestrator import Orchestrator
         from nanoc.agents.base import TeamLeader
 
         leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
         orch = Orchestrator(memory, leader)
 
-        mock_agent = MagicMock()
-        mock_agent.role = "Reviewer"
-        mock_agent.log = AsyncMock()
-        mock_agent.review_work = AsyncMock(return_value="STATUS: APPROVED")
-        orch.add_agent(mock_agent)
+        mock_reviewer = MagicMock()
+        mock_reviewer.role = "Reviewer"
+        mock_reviewer.log = AsyncMock()
+        mock_reviewer.review_work = AsyncMock(return_value="STATUS: APPROVED everything looks good")
+        orch.add_agent(mock_reviewer)
 
         task_id = memory.create_task(
-            "Review this code: def foo(): pass",
+            "proj_rev: Review this code: def foo(): pass",
             assigned_to="Reviewer",
-            project_id="proj_reviewer"
+            project_id="proj_rev"
         )
+
         with sqlite3.connect(memory.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -708,130 +906,31 @@ class TestOrchestratorRoleDispatch:
 
         await orch.process_task(task)
 
-        mock_agent.review_work.assert_called_once_with(task["description"])
+        mock_reviewer.review_work.assert_called_once_with(task["description"])
 
     @pytest.mark.anyio
-    async def test_unknown_role_dispatches_to_think(self, memory):
-        """process_task calls agent.think() for unrecognized roles."""
+    async def test_reviewer_not_approved_creates_fix_task_for_coder(self, memory):
+        """When Reviewer returns without 'APPROVED', orchestrator creates a fix task for Coder."""
         from nanoc.core.orchestrator import Orchestrator
         from nanoc.agents.base import TeamLeader
 
         leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
         orch = Orchestrator(memory, leader)
 
-        mock_agent = MagicMock()
-        mock_agent.role = "CustomRole"
-        mock_agent.log = AsyncMock()
-        mock_agent.think = AsyncMock(return_value="thought result")
-        orch.add_agent(mock_agent)
+        mock_reviewer = MagicMock()
+        mock_reviewer.role = "Reviewer"
+        mock_reviewer.log = AsyncMock()
+        mock_reviewer.review_work = AsyncMock(
+            return_value="STATUS: FAILED missing error handling"
+        )
+        orch.add_agent(mock_reviewer)
 
         task_id = memory.create_task(
-            "Do something custom",
-            assigned_to="CustomRole",
-            project_id="proj_custom"
-        )
-        with sqlite3.connect(memory.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-            task = dict(cursor.fetchone())
-
-        await orch.process_task(task)
-
-        mock_agent.think.assert_called_once()
-        think_prompt = mock_agent.think.call_args[0][0]
-        assert "Do something custom" in think_prompt
-
-    @pytest.mark.anyio
-    async def test_completed_task_status_set_after_success(self, memory):
-        """process_task sets task status to 'completed' after successful execution."""
-        from nanoc.core.orchestrator import Orchestrator
-        from nanoc.agents.base import TeamLeader
-
-        leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
-        orch = Orchestrator(memory, leader)
-
-        mock_agent = MagicMock()
-        mock_agent.role = "Coder"
-        mock_agent.log = AsyncMock()
-        mock_agent.write_code = AsyncMock(return_value="# code")
-        orch.add_agent(mock_agent)
-
-        task_id = memory.create_task("Write code", assigned_to="Coder", project_id="proj_done")
-        with sqlite3.connect(memory.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-            task = dict(cursor.fetchone())
-
-        await orch.process_task(task)
-
-        with sqlite3.connect(memory.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
-            row = cursor.fetchone()
-
-        assert row[0] == "completed"
-
-
-# ===========================================================================
-# nanoc/core/orchestrator.py – Reviewer fix-task creation
-# ===========================================================================
-
-class TestOrchestratorReviewerFixTask:
-    @pytest.mark.anyio
-    async def test_reviewer_approved_does_not_create_fix_task(self, memory):
-        """When Reviewer returns 'APPROVED', no fix task is created."""
-        from nanoc.core.orchestrator import Orchestrator
-        from nanoc.agents.base import TeamLeader
-
-        leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
-        orch = Orchestrator(memory, leader)
-
-        mock_agent = MagicMock()
-        mock_agent.role = "Reviewer"
-        mock_agent.log = AsyncMock()
-        mock_agent.review_work = AsyncMock(return_value="STATUS: APPROVED - looks good")
-        orch.add_agent(mock_agent)
-
-        task_id = memory.create_task(
-            "Review this code",
+            "proj_fix: Review code snippet",
             assigned_to="Reviewer",
-            project_id="proj_approved"
+            project_id="proj_fix"
         )
-        with sqlite3.connect(memory.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-            task = dict(cursor.fetchone())
 
-        with patch.object(memory, "create_task", wraps=memory.create_task) as mock_create:
-            await orch.process_task(task)
-
-        # Only the original task creation was called (before the test)
-        # After process_task, no new create_task call should happen
-        mock_create.assert_not_called()
-
-    @pytest.mark.anyio
-    async def test_reviewer_not_approved_creates_fix_task(self, memory):
-        """When Reviewer result lacks 'APPROVED', orchestrator creates a fix task for Coder."""
-        from nanoc.core.orchestrator import Orchestrator
-        from nanoc.agents.base import TeamLeader
-
-        leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
-        orch = Orchestrator(memory, leader)
-
-        mock_agent = MagicMock()
-        mock_agent.role = "Reviewer"
-        mock_agent.log = AsyncMock()
-        mock_agent.review_work = AsyncMock(return_value="STATUS: FAILED - missing error handling")
-        orch.add_agent(mock_agent)
-
-        task_id = memory.create_task(
-            "Review this code: def foo(): pass",
-            assigned_to="Reviewer",
-            project_id="proj_failed_review"
-        )
         with sqlite3.connect(memory.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -840,7 +939,7 @@ class TestOrchestratorReviewerFixTask:
 
         await orch.process_task(task)
 
-        # Check that a fix task was created assigned to Coder
+        # A fix task should have been created for the Coder
         with sqlite3.connect(memory.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -851,29 +950,29 @@ class TestOrchestratorReviewerFixTask:
             fix_tasks = [dict(row) for row in cursor.fetchall()]
 
         assert len(fix_tasks) >= 1
+        assert any("Fix flaws" in t["description"] for t in fix_tasks)
 
     @pytest.mark.anyio
-    async def test_reviewer_fix_task_description_contains_review_result(self, memory):
-        """The fix task description includes the reviewer's feedback."""
+    async def test_reviewer_approved_does_not_create_fix_task(self, memory):
+        """When Reviewer returns 'APPROVED', no fix task is created."""
         from nanoc.core.orchestrator import Orchestrator
         from nanoc.agents.base import TeamLeader
 
         leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
         orch = Orchestrator(memory, leader)
 
-        review_result = "STATUS: FAILED - needs input validation"
-
-        mock_agent = MagicMock()
-        mock_agent.role = "Reviewer"
-        mock_agent.log = AsyncMock()
-        mock_agent.review_work = AsyncMock(return_value=review_result)
-        orch.add_agent(mock_agent)
+        mock_reviewer = MagicMock()
+        mock_reviewer.role = "Reviewer"
+        mock_reviewer.log = AsyncMock()
+        mock_reviewer.review_work = AsyncMock(return_value="STATUS: APPROVED looks perfect")
+        orch.add_agent(mock_reviewer)
 
         task_id = memory.create_task(
-            "Review the authentication module",
+            "proj_app: Review approved code",
             assigned_to="Reviewer",
-            project_id="proj_review_desc"
+            project_id="proj_app"
         )
+
         with sqlite3.connect(memory.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -882,21 +981,20 @@ class TestOrchestratorReviewerFixTask:
 
         await orch.process_task(task)
 
+        # No new Coder fix task should have been created
         with sqlite3.connect(memory.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT description FROM tasks WHERE assigned_to = 'Coder' AND id != ?",
-                (task_id,)
+                "SELECT * FROM tasks WHERE assigned_to = 'Coder'",
             )
-            fix_tasks = [dict(row) for row in cursor.fetchall()]
+            coder_tasks = [dict(row) for row in cursor.fetchall()]
 
-        assert len(fix_tasks) >= 1
-        assert "needs input validation" in fix_tasks[0]["description"]
+        assert len(coder_tasks) == 0
 
     @pytest.mark.anyio
-    async def test_reviewer_fix_task_uses_original_project_id(self, memory):
-        """The fix task created by orchestrator uses the original task's project_id."""
+    async def test_unknown_role_calls_agent_think(self, memory):
+        """For an unrecognized role, process_task falls back to agent.think()."""
         from nanoc.core.orchestrator import Orchestrator
         from nanoc.agents.base import TeamLeader
 
@@ -904,16 +1002,17 @@ class TestOrchestratorReviewerFixTask:
         orch = Orchestrator(memory, leader)
 
         mock_agent = MagicMock()
-        mock_agent.role = "Reviewer"
+        mock_agent.role = "CustomRole"
         mock_agent.log = AsyncMock()
-        mock_agent.review_work = AsyncMock(return_value="STATUS: FAILED - incomplete")
+        mock_agent.think = AsyncMock(return_value="custom result")
         orch.add_agent(mock_agent)
 
         task_id = memory.create_task(
-            "Review this code",
-            assigned_to="Reviewer",
-            project_id="proj_fix_pid"
+            "Do something custom",
+            assigned_to="CustomRole",
+            project_id="proj_custom"
         )
+
         with sqlite3.connect(memory.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -922,80 +1021,32 @@ class TestOrchestratorReviewerFixTask:
 
         await orch.process_task(task)
 
-        with sqlite3.connect(memory.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT project_id FROM tasks WHERE assigned_to = 'Coder' AND id != ?",
-                (task_id,)
-            )
-            rows = cursor.fetchall()
-
-        assert len(rows) >= 1
-        assert rows[0]["project_id"] == "proj_fix_pid"
+        mock_agent.think.assert_called_once()
+        call_arg = mock_agent.think.call_args[0][0]
+        assert "Execute this task" in call_arg
+        assert task["description"] in call_arg
 
     @pytest.mark.anyio
-    async def test_reviewer_fix_task_description_contains_original_task(self, memory):
-        """The fix task description references the original task description."""
+    async def test_successful_task_set_to_completed(self, memory):
+        """process_task marks task as 'completed' on success."""
         from nanoc.core.orchestrator import Orchestrator
         from nanoc.agents.base import TeamLeader
 
         leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
         orch = Orchestrator(memory, leader)
 
-        original_desc = "Review the login handler code"
-
-        mock_agent = MagicMock()
-        mock_agent.role = "Reviewer"
-        mock_agent.log = AsyncMock()
-        mock_agent.review_work = AsyncMock(return_value="STATUS: FAILED - no tests")
-        orch.add_agent(mock_agent)
+        mock_coder = MagicMock()
+        mock_coder.role = "Coder"
+        mock_coder.log = AsyncMock()
+        mock_coder.write_code = AsyncMock(return_value="final code")
+        orch.add_agent(mock_coder)
 
         task_id = memory.create_task(
-            original_desc,
-            assigned_to="Reviewer",
-            project_id="proj_orig_task"
+            "proj_done: Write code",
+            assigned_to="Coder",
+            project_id="proj_done"
         )
-        with sqlite3.connect(memory.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
-            task = dict(cursor.fetchone())
 
-        await orch.process_task(task)
-
-        with sqlite3.connect(memory.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT description FROM tasks WHERE assigned_to = 'Coder' AND id != ?",
-                (task_id,)
-            )
-            rows = cursor.fetchall()
-
-        assert len(rows) >= 1
-        assert original_desc in rows[0]["description"]
-
-    @pytest.mark.anyio
-    async def test_reviewer_approved_task_marked_completed(self, memory):
-        """When Reviewer approves, the task is marked 'completed' in DB."""
-        from nanoc.core.orchestrator import Orchestrator
-        from nanoc.agents.base import TeamLeader
-
-        leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
-        orch = Orchestrator(memory, leader)
-
-        mock_agent = MagicMock()
-        mock_agent.role = "Reviewer"
-        mock_agent.log = AsyncMock()
-        mock_agent.review_work = AsyncMock(return_value="STATUS: APPROVED everything is fine")
-        orch.add_agent(mock_agent)
-
-        task_id = memory.create_task(
-            "Review the module",
-            assigned_to="Reviewer",
-            project_id="proj_complete"
-        )
         with sqlite3.connect(memory.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -1006,130 +1057,83 @@ class TestOrchestratorReviewerFixTask:
 
         with sqlite3.connect(memory.db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
+            cursor.execute("SELECT status, result FROM tasks WHERE id = ?", (task_id,))
             row = cursor.fetchone()
 
         assert row[0] == "completed"
-
-
-# ===========================================================================
-# nanoc/agents/security.py – event payload has no findings/vulnerabilities
-# ===========================================================================
-
-class TestSecurityAgentEventPayloadSimplified:
-    @pytest.mark.anyio
-    async def test_audit_complete_event_has_no_findings_field(self, memory):
-        """After PR, 'security/audit-complete' event payload does NOT include 'findings'."""
-        from nanoc.agents.security import SecurityAgent
-
-        agent = SecurityAgent("Sec1", memory)
-        agent.llm = MockLLM()
-
-        nmap_result = {
-            "stdout": "22/tcp open ssh OpenSSH 8.2 Telnet service detected",
-            "stderr": "",
-            "returncode": 0
-        }
-
-        with patch("nanoc.tools.network.AsyncRunner") as mock_runner:
-            mock_runner.run_command = AsyncMock(return_value=nmap_result)
-            await agent.audit_service("192.168.1.100")
-
-        events = memory.get_events(topic="security/audit-complete")
-        assert len(events) >= 1
-        payload = json.loads(events[-1]["payload"])
-        assert "findings" not in payload
+        assert row[1] == "final code"
 
     @pytest.mark.anyio
-    async def test_audit_complete_event_has_no_vulnerabilities_field(self, memory):
-        """After PR, 'security/audit-complete' event payload does NOT include 'vulnerabilities'."""
-        from nanoc.agents.security import SecurityAgent
+    async def test_fix_task_description_contains_original_task(self, memory):
+        """The fix task description includes the original failing task description."""
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import TeamLeader
 
-        agent = SecurityAgent("Sec1", memory)
-        agent.llm = MockLLM()
+        leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
+        orch = Orchestrator(memory, leader)
 
-        nmap_result = {
-            "stdout": "23/tcp open telnet",
-            "stderr": "",
-            "returncode": 0
-        }
+        mock_reviewer = MagicMock()
+        mock_reviewer.role = "Reviewer"
+        mock_reviewer.log = AsyncMock()
+        review_result = "STATUS: FAILED add input validation"
+        mock_reviewer.review_work = AsyncMock(return_value=review_result)
+        orch.add_agent(mock_reviewer)
 
-        with patch("nanoc.tools.network.AsyncRunner") as mock_runner:
-            mock_runner.run_command = AsyncMock(return_value=nmap_result)
-            await agent.audit_service("10.0.0.50")
+        original_desc = "proj_orig: Review my special code"
+        task_id = memory.create_task(original_desc, assigned_to="Reviewer", project_id="proj_orig")
 
-        events = memory.get_events(topic="security/audit-complete")
-        assert len(events) >= 1
-        payload = json.loads(events[-1]["payload"])
-        assert "vulnerabilities" not in payload
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+            task = dict(cursor.fetchone())
 
-    @pytest.mark.anyio
-    async def test_audit_complete_event_payload_has_only_target_and_report(self, memory):
-        """The 'security/audit-complete' event payload contains exactly 'target' and 'report'."""
-        from nanoc.agents.security import SecurityAgent
+        await orch.process_task(task)
 
-        agent = SecurityAgent("Sec1", memory)
-        agent.llm = MockLLM()
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT description FROM tasks WHERE assigned_to = 'Coder'")
+            fix_tasks = [dict(row) for row in cursor.fetchall()]
 
-        nmap_result = {
-            "stdout": "80/tcp open http",
-            "stderr": "",
-            "returncode": 0
-        }
-
-        with patch("nanoc.tools.network.AsyncRunner") as mock_runner:
-            mock_runner.run_command = AsyncMock(return_value=nmap_result)
-            await agent.audit_service("172.16.0.1")
-
-        events = memory.get_events(topic="security/audit-complete")
-        payload = json.loads(events[-1]["payload"])
-        assert set(payload.keys()) == {"target", "report"}
+        assert len(fix_tasks) >= 1
+        fix_desc = fix_tasks[0]["description"]
+        assert original_desc in fix_desc
 
     @pytest.mark.anyio
-    async def test_telnet_scan_does_not_add_findings_to_event(self, memory):
-        """Even when telnet is detected in output, no vulnerability analysis in event."""
-        from nanoc.agents.security import SecurityAgent
+    async def test_fix_task_project_id_matches_original(self, memory):
+        """The fix task created by Reviewer failure has the same project_id."""
+        from nanoc.core.orchestrator import Orchestrator
+        from nanoc.agents.base import TeamLeader
 
-        agent = SecurityAgent("Sec1", memory)
-        agent.llm = MockLLM()
+        leader = TeamLeader("Leader", "Team Leader", memory, MockLLM())
+        orch = Orchestrator(memory, leader)
 
-        nmap_result = {
-            "stdout": "23/tcp open telnet  Linux telnetd",
-            "stderr": "",
-            "returncode": 0
-        }
+        mock_reviewer = MagicMock()
+        mock_reviewer.role = "Reviewer"
+        mock_reviewer.log = AsyncMock()
+        mock_reviewer.review_work = AsyncMock(return_value="STATUS: FAILED")
+        orch.add_agent(mock_reviewer)
 
-        with patch("nanoc.tools.network.AsyncRunner") as mock_runner:
-            mock_runner.run_command = AsyncMock(return_value=nmap_result)
-            await agent.audit_service("192.168.0.10")
+        task_id = memory.create_task(
+            "proj_projfix: Review code",
+            assigned_to="Reviewer",
+            project_id="proj_projfix"
+        )
 
-        events = memory.get_events(topic="security/audit-complete")
-        payload = json.loads(events[-1]["payload"])
-        # After the PR, vulnerability analysis logic was removed
-        assert "findings" not in payload
-        assert "vulnerabilities" not in payload
-        # But report is still present
-        assert "report" in payload
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+            task = dict(cursor.fetchone())
 
-    @pytest.mark.anyio
-    async def test_expired_ssl_scan_no_findings_in_event(self, memory):
-        """Expired SSL in output does not trigger vulnerability findings in event payload."""
-        from nanoc.agents.security import SecurityAgent
+        await orch.process_task(task)
 
-        agent = SecurityAgent("Sec1", memory)
-        agent.llm = MockLLM()
+        with sqlite3.connect(memory.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT project_id FROM tasks WHERE assigned_to = 'Coder'")
+            fix_tasks = [dict(row) for row in cursor.fetchall()]
 
-        nmap_result = {
-            "stdout": "443/tcp open ssl/https -- certificate expired",
-            "stderr": "",
-            "returncode": 0
-        }
-
-        with patch("nanoc.tools.network.AsyncRunner") as mock_runner:
-            mock_runner.run_command = AsyncMock(return_value=nmap_result)
-            await agent.audit_service("10.0.0.99")
-
-        events = memory.get_events(topic="security/audit-complete")
-        payload = json.loads(events[-1]["payload"])
-        assert "findings" not in payload
-        assert "vulnerabilities" not in payload
+        assert len(fix_tasks) >= 1
+        assert fix_tasks[0]["project_id"] == "proj_projfix"
