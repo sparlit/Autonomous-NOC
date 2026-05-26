@@ -16,8 +16,14 @@ class Analyst(BaseAgent):
         analysis = await self.think(prompt)
 
         # Create a fix task
-        self.memory.create_task(f"FIX: {analysis}", assigned_to="Coder")
+        self.memory.create_task(
+            f"FIX: {analysis}",
+            assigned_to="Coder",
+            project_id=project_id,
+            priority=10
+        )
         self.memory.publish_event("analysis/completed", {
             "strategy": analysis,
-            "original_error": error_msg
+            "original_error": error_msg,
+            "project_id": project_id
         })

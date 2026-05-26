@@ -64,7 +64,14 @@ class LLMProvider:
         async with httpx.AsyncClient() as client:
             response = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data, timeout=60.0)
             response.raise_for_status()
-            return response.json()['choices'][0]['message']['content']
+            resp_json = response.json()
+
+            # Record actual usage if available
+            usage = resp_json.get("usage", {})
+            if usage:
+                self._record_usage(model, usage)
+
+            return resp_json['choices'][0]['message']['content']
 
     async def _ollama_complete(self, prompt: str, system_prompt: str, model: str) -> str:
         data = {
@@ -78,4 +85,19 @@ class LLMProvider:
         async with httpx.AsyncClient() as client:
             response = await client.post(f"{settings.OLLAMA_BASE_URL}/api/chat", json=data, timeout=60.0)
             response.raise_for_status()
-            return response.json()['message']['content']
+            resp_json = response.json()
+
+            # Record actual usage if available
+            prompt_tokens = resp_json.get("prompt_eval_count", 0)
+            completion_tokens = resp_json.get("eval_count", 0)
+            if prompt_tokens or completion_tokens:
+                 self._record_usage(model, {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens})
+
+            return resp_json['message']['content']
+
+    def _record_usage(self, model, usage):
+        hub = TelemetryHub(Memory(settings.DB_PATH))
+        prompt_tokens = usage.get("prompt_tokens", 0)
+        completion_tokens = usage.get("completion_tokens", 0)
+        cost = ((prompt_tokens + completion_tokens) / 1000) * 0.01 # Simple cost estimation
+        hub.record_token_usage(model, prompt_tokens, completion_tokens, cost)

@@ -136,7 +136,11 @@ class Orchestrator:
                 arch = self.memory.get_knowledge(f"project_{project_id}_arch")
                 self.memory.create_task(f"{project_id}: Create task list for design: {arch[:50]}", assigned_to="Planner", project_id=project_id)
             elif gate_type == "code":
-                await analyst.log(f"Project {project_id} completed successfully.")
+                await analyst.log(f"Project {project_id} completed successfully. Promoting changes...")
+                from nanoc.core.evolution import SelfEvolutionManager
+                from nanoc.core.config import settings
+                sem = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+                sem.promote_staging_to_production()
 
         async def handle_scale_up(payload):
             if len(self.current_workers) < self.max_workers:
@@ -151,10 +155,23 @@ class Orchestrator:
                 task.cancel()
                 await self.leader.log(f"Scaled down: One worker removed. Total: {len(self.current_workers)}")
 
+        async def handle_task_created(payload):
+            task_id = payload.get("task_id")
+            with sqlite3.connect(self.memory.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+                task = dict(cursor.fetchone())
+                if task['status'] == 'pending':
+                    cursor.execute("UPDATE tasks SET status = 'processing', updated_at = ? WHERE id = ?", (datetime.now(), task_id))
+                    conn.commit()
+                    await self.task_queue.put(task)
+
         bus.subscribe("gate/result-added", handle_gate_result)
         bus.subscribe("gate/resolved", handle_gate_resolved)
         bus.subscribe("system/scale-up", handle_scale_up)
         bus.subscribe("system/scale-down", handle_scale_down)
+        bus.subscribe("task/created", handle_task_created)
         asyncio.create_task(bus.start_polling())
 
         # Start initial worker pool

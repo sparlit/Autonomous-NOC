@@ -176,8 +176,7 @@ class TeamLeader(BaseAgent):
 
         self.memory.publish_event("project/incoming-job", {
             "project_id": project_id,
-            "description": project_description,
-            "leader": self.agent_id
+            "description": project_description
         })
 
         prompt = f"Break down this project into high-level architectural requirements:\n{project_description}"
@@ -268,8 +267,32 @@ class Coder(BaseAgent):
         await self.log(f"Coding task: {task}")
         project_id = task.split(":")[0] if ":" in task else "unknown"
 
-        prompt = f"Write the Python code to solve this task:\n{task}\nProvide ONLY the code."
-        code = await self.think(prompt)
+        prompt = f"Write the Python code to solve this task:\n{task}\nProvide the response in the format:\nFILEPATH: <relative_path>\nCODE: <code>"
+        response = await self.think(prompt)
+
+        # Extract FILEPATH and CODE
+        filepath = "nanoc/workspace/generated_code.py"
+        code = response
+
+        import re
+        fp_match = re.search(r"FILEPATH:\s*(.*)", response)
+        code_match = re.search(r"CODE:\s*(.*)", response, re.DOTALL)
+
+        if fp_match:
+            filepath = fp_match.group(1).strip()
+        if code_match:
+            code = code_match.group(1).strip()
+
+        # Stage the change
+        from nanoc.core.evolution import SelfEvolutionManager
+        from nanoc.core.config import settings
+        sem = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+        sem.prepare_staging()
+        try:
+            sem.apply_change_to_staging(filepath, code)
+            await self.log(f"Staged change to {filepath}")
+        except Exception as e:
+            await self.log(f"Staging failed: {e}")
 
         # Publish result to the event bus
         self.memory.publish_event("worker/response", {
@@ -277,7 +300,8 @@ class Coder(BaseAgent):
             "role": "Coder",
             "task": task,
             "result": code,
-            "status": "pending_review"
+            "status": "pending_review",
+            "filepath": filepath
         })
 
         # Verify and review before committing

@@ -75,6 +75,13 @@ class Memory:
                     timestamp TIMESTAMP
                 )
             ''')
+
+            # Schema Migration: Add priority to tasks if missing
+            try:
+                cursor.execute("ALTER TABLE tasks ADD COLUMN priority INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass # Already exists
+
             conn.commit()
 
     def publish_event(self, topic: str, payload: Dict[str, Any], schema_version: str = "1.0"):
@@ -168,12 +175,22 @@ class Memory:
                 return json.loads(row[0])
             return None
 
-    def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None) -> int:
+    def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None, priority: int = 0) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO tasks (description, assigned_to, status, parent_id, project_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (description, assigned_to, 'pending', parent_id, project_id, datetime.now(), datetime.now()))
+                INSERT INTO tasks (description, assigned_to, status, parent_id, project_id, priority, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (description, assigned_to, 'pending', parent_id, project_id, priority, datetime.now(), datetime.now()))
+            task_id = cursor.lastrowid
             conn.commit()
-            return cursor.lastrowid
+
+            # Publish event for event-driven processing
+            self.publish_event("task/created", {
+                "task_id": task_id,
+                "assigned_to": assigned_to,
+                "project_id": project_id,
+                "priority": priority
+            })
+
+            return task_id
