@@ -116,6 +116,13 @@ class BaseAgent:
     def register_tool(self, name: str, func: callable):
         self.tools[name] = func
 
+    async def handle_task(self, task: Dict[str, Any]) -> str:
+        """
+        Generic task handler that uses the agent's 'think' method.
+        Subclasses can override this for specialized logic.
+        """
+        return await self.think(f"Execute this task: {task['description']}")
+
 class ProjectManager(BaseAgent):
     def __init__(self, agent_id: str, memory: Memory, team_leaders: List[str] = None):
         super().__init__(agent_id, "ProjectManager", memory)
@@ -177,8 +184,7 @@ class TeamLeader(BaseAgent):
 
         self.memory.publish_event("project/incoming-job", {
             "project_id": project_id,
-            "description": project_description,
-            "leader": self.agent_id
+            "description": project_description
         })
 
         prompt = f"Break down this project into high-level architectural requirements:\n{project_description}"
@@ -209,6 +215,9 @@ class TeamLeader(BaseAgent):
         return project_id
 
 class Architect(BaseAgent):
+    async def handle_task(self, task: Dict[str, Any]) -> str:
+        return await self.design_solution(task['description'])
+
     async def design_solution(self, requirements: str):
         await self.log("Designing system architecture with internal debate...")
 
@@ -246,6 +255,9 @@ class Architect(BaseAgent):
         return design
 
 class Planner(BaseAgent):
+    async def handle_task(self, task: Dict[str, Any]) -> str:
+        return await self.create_todo_list(task['description'])
+
     async def create_todo_list(self, architecture: str):
         await self.log("Generating granular task list...")
         project_id = architecture.split(":")[0] if ":" in architecture else "unknown"
@@ -265,6 +277,9 @@ class Planner(BaseAgent):
         return todo_list
 
 class Coder(BaseAgent):
+    async def handle_task(self, task: Dict[str, Any]) -> str:
+        return await self.write_code(task['description'])
+
     async def write_code(self, task: str):
         await self.log(f"Coding task: {task}")
         project_id = task.split(":")[0] if ":" in task else "unknown"
@@ -286,6 +301,18 @@ class Coder(BaseAgent):
         return code
 
 class Reviewer(BaseAgent):
+    async def handle_task(self, task: Dict[str, Any]) -> str:
+        result = await self.review_work(task['description'])
+        if "APPROVED" not in result:
+            # This logic might be better placed in the orchestrator or project manager,
+            # but we'll keep it here for now to maintain parity with existing behavior.
+            self.memory.create_task(
+                f"Fix flaws in previous work based on review: {result}\nOriginal Task: {task['description']}",
+                assigned_to="Coder",
+                project_id=task.get('project_id')
+            )
+        return result
+
     async def review_work(self, work: str):
         await self.log("Reviewing work for flaws...")
         project_id = work.split(":")[0] if ":" in work else "unknown"

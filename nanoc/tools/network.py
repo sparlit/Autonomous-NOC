@@ -132,14 +132,15 @@ class DiscoveryTool:
 
     @staticmethod
     def _get_fallback_topology(memory):
+        """
+        Provides a basic topology when discovery fails or returns no external results.
+        Instead of a dummy hardcoded router, it uses local host information.
+        """
         topology = {
             "nodes": [
-                {"id": "Core-Rtr-01", "label": "Core Router", "type": "router", "status": "online"},
                 {"id": "127.0.0.1", "label": "localhost", "type": "host", "status": "online"}
             ],
-            "edges": [
-                {"from": "127.0.0.1", "to": "Core-Rtr-01", "label": "Uplink"}
-            ]
+            "edges": []
         }
         memory.upsert_knowledge("network_topology", topology)
         return topology

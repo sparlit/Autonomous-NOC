@@ -54,24 +54,9 @@ class Orchestrator:
             await agent.log(f"Processing task {task['id']}: {task['description']}")
 
             try:
-                if role == "Architect":
-                    desc = task['description']
-                    result = await agent.design_solution(desc)
-                elif role == "Planner":
-                    desc = task['description']
-                    result = await agent.create_todo_list(desc)
-                elif role == "Coder":
-                    desc = task['description']
-                    result = await agent.write_code(desc)
-                elif role == "Reviewer":
-                    desc = task['description']
-                    result = await agent.review_work(desc)
-                    if "APPROVED" not in result:
-                        self.memory.create_task(
-                            f"Fix flaws in previous work based on review: {result}\nOriginal Task: {task['description']}",
-                            assigned_to="Coder",
-                            project_id=task.get('project_id')
-                        )
+                # Dynamic dispatch to agent's handle_task method
+                if hasattr(agent, 'handle_task'):
+                    result = await agent.handle_task(task)
                 else:
                     result = await agent.think(f"Execute this task: {task['description']}")
 
