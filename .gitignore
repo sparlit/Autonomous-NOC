@@ -1,7 +1,8 @@
 __pycache__/
 *.pyc
 nanoc/memory/*.db
-nanoc/logs/*.txt
+nanoc/logs/
+nanoc/inbox/
 nanoc/workspace/
 nanoc/staging/
 nanoc_backup/
