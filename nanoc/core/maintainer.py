@@ -22,6 +22,15 @@ def main():
     inbox_dir = "nanoc/inbox"
     os.makedirs(inbox_dir, exist_ok=True)
 
+    # Initial bulk injection for 100 iterations
+    print("Performing initial bulk injection of 100 maintenance tasks...")
+    for i in range(100):
+        timestamp = int(time.time())
+        filename = f"{inbox_dir}/maintainer_task_init_{timestamp}_{i}.txt"
+        with open(filename, "w") as f:
+            f.write(TASK_DESCRIPTION)
+        time.sleep(0.1)
+
     while True:
         timestamp = int(time.time())
         filename = f"{inbox_dir}/maintainer_task_{timestamp}.txt"

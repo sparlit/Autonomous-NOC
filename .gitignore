@@ -5,4 +5,6 @@ nanoc/logs/*.txt
 nanoc/workspace/
 nanoc/staging/
 nanoc_backup/
+nanoc/inbox/
+nanoc/logs/
 .env

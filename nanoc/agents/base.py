@@ -6,6 +6,8 @@ from typing import List, Dict, Any, Optional
 from nanoc.core.llm import LLMProvider
 from nanoc.memory.memory import Memory
 from nanoc.tools.network import DiagnosticTools, DiscoveryTool
+from nanoc.core.evolution import SelfEvolutionManager
+from nanoc.core.config import settings
 
 class BaseAgent:
     def __init__(self, agent_id: str, role: str, memory: Memory, provider: Optional[LLMProvider] = None):
@@ -184,8 +186,13 @@ class TeamLeader(BaseAgent):
 
         self.memory.publish_event("project/incoming-job", {
             "project_id": project_id,
-            "description": project_description
+            "description": project_description,
+            "leader": self.agent_id
         })
+
+        # Prepare staging for new project
+        evolver = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+        evolver.prepare_staging()
 
         prompt = f"Break down this project into high-level architectural requirements:\n{project_description}"
         architecture = await self.think(prompt)
@@ -284,8 +291,38 @@ class Coder(BaseAgent):
         await self.log(f"Coding task: {task}")
         project_id = task.split(":")[0] if ":" in task else "unknown"
 
-        prompt = f"Write the Python code to solve this task:\n{task}\nProvide ONLY the code."
-        code = await self.think(prompt)
+        prompt = (
+            f"Write the Python code to solve this task:\n{task}\n"
+            "Respond using this exact format:\n"
+            "FILEPATH: <relative_path_to_file>\n"
+            "CODE:\n"
+            "```python\n"
+            "<your_code_here>\n"
+            "```"
+        )
+        response = await self.think(prompt)
+
+        # Extraction logic
+        filepath = "unknown_file.py"
+        code = response
+        if "FILEPATH:" in response:
+            filepath = response.split("FILEPATH:")[1].split("\n")[0].strip()
+        if "CODE:" in response:
+            code_part = response.split("CODE:")[1].strip()
+            if "```python" in code_part:
+                code = code_part.split("```python")[1].split("```")[0].strip()
+            elif "```" in code_part:
+                code = code_part.split("```")[1].split("```")[0].strip()
+            else:
+                code = code_part
+
+        # Stage change
+        evolver = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+        try:
+            evolver.apply_change_to_staging(filepath, code)
+            await self.log(f"Staged code change to {filepath} in staging.")
+        except Exception as e:
+            await self.log(f"Failed to stage code: {e}")
 
         # Publish result to the event bus
         self.memory.publish_event("worker/response", {
@@ -293,11 +330,12 @@ class Coder(BaseAgent):
             "role": "Coder",
             "task": task,
             "result": code,
-            "status": "pending_review"
+            "status": "pending_review",
+            "filepath": filepath
         })
 
         # Verify and review before committing
-        self.memory.create_task(f"{project_id}: Review this code for flaws:\n{code}", assigned_to="Reviewer")
+        self.memory.create_task(f"{project_id}: Review this code for flaws:\nFILEPATH: {filepath}\nCODE:\n{code}", assigned_to="Reviewer")
         return code
 
 class Reviewer(BaseAgent):
