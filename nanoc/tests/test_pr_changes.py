@@ -1268,8 +1268,8 @@ class TestDiscoveryToolCaching:
         assert result == custom_topology
 
     @pytest.mark.asyncio
-    async def test_discover_topology_default_contains_core_router(self, tmp_path):
-        """Default topology includes Core-Rtr-01 node."""
+    async def test_discover_topology_default_contains_localhost(self, tmp_path):
+        """Default topology includes 127.0.0.1 node."""
         from unittest.mock import patch
         from nanoc.tools.network import DiscoveryTool
         db_path = str(tmp_path / "disco4.db")
@@ -1280,7 +1280,7 @@ class TestDiscoveryToolCaching:
             topo = await DiscoveryTool.discover_topology()
 
         node_ids = [n["id"] for n in topo["nodes"]]
-        assert "Core-Rtr-01" in node_ids
+        assert "127.0.0.1" in node_ids
 
     @pytest.mark.asyncio
     async def test_discover_topology_does_not_overwrite_existing_cache(self, tmp_path):
