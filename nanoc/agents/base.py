@@ -184,7 +184,8 @@ class TeamLeader(BaseAgent):
 
         self.memory.publish_event("project/incoming-job", {
             "project_id": project_id,
-            "description": project_description
+            "description": project_description,
+            "leader": self.agent_id
         })
 
         prompt = f"Break down this project into high-level architectural requirements:\n{project_description}"
@@ -284,8 +285,42 @@ class Coder(BaseAgent):
         await self.log(f"Coding task: {task}")
         project_id = task.split(":")[0] if ":" in task else "unknown"
 
-        prompt = f"Write the Python code to solve this task:\n{task}\nProvide ONLY the code."
-        code = await self.think(prompt)
+        system_prompt = (
+            "You are a Coder. Your response MUST follow this structure:\n"
+            "FILEPATH: <relative_path_to_file>\n"
+            "CODE: \n"
+            "```python\n"
+            "<your_code_here>\n"
+            "```"
+        )
+        prompt = f"Write the Python code to solve this task:\n{task}\n{system_prompt}"
+        response = await self.think(prompt)
+
+        # Parse FILEPATH and CODE
+        filepath = "unknown_file.py"
+        code = response
+        if "FILEPATH:" in response and "CODE:" in response:
+            try:
+                filepath = response.split("FILEPATH:")[1].split("CODE:")[0].strip()
+                code_block = response.split("CODE:")[1].strip()
+                if "```python" in code_block:
+                    code = code_block.split("```python")[1].split("```")[0].strip()
+                elif "```" in code_block:
+                    code = code_block.split("```")[1].split("```")[0].strip()
+                else:
+                    code = code_block
+            except Exception as e:
+                await self.log(f"Failed to parse response: {e}")
+
+        # Stage the change
+        from nanoc.core.evolution import SelfEvolutionManager
+        from nanoc.core.config import settings
+        mgr = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+        try:
+            mgr.apply_change_to_staging(filepath, code)
+            await self.log(f"Staged change to {filepath} in {settings.STAGING_DIR}")
+        except Exception as e:
+            await self.log(f"Failed to stage change: {e}")
 
         # Publish result to the event bus
         self.memory.publish_event("worker/response", {
