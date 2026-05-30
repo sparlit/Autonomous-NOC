@@ -6,3 +6,4 @@ nanoc/workspace/
 nanoc/staging/
 nanoc_backup/
 .env
+nanoc/inbox/*.txt
