@@ -4,6 +4,8 @@ import sqlite3
 from datetime import datetime
 from typing import List, Dict, Any
 from nanoc.agents.base import BaseAgent
+from nanoc.core.config import settings
+from nanoc.core.evolution import SelfEvolutionManager
 from nanoc.memory.memory import Memory
 
 class Debater:
@@ -121,6 +123,13 @@ class Orchestrator:
                 arch = self.memory.get_knowledge(f"project_{project_id}_arch")
                 self.memory.create_task(f"{project_id}: Create task list for design: {arch[:50]}", assigned_to="Planner", project_id=project_id)
             elif gate_type == "code":
+                # Automatically promote staging to production upon successful code gate
+                try:
+                    evolver = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+                    evolver.promote_staging_to_production()
+                    await analyst.log(f"Project {project_id} evolved and promoted to production.")
+                except Exception as e:
+                    await analyst.log(f"Promotion failed for project {project_id}: {e}")
                 await analyst.log(f"Project {project_id} completed successfully.")
 
         async def handle_scale_up(payload):
