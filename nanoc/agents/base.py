@@ -4,6 +4,8 @@ import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from nanoc.core.llm import LLMProvider
+from nanoc.core.config import settings
+from nanoc.core.evolution import SelfEvolutionManager
 from nanoc.memory.memory import Memory
 from nanoc.tools.network import DiagnosticTools, DiscoveryTool
 
@@ -176,6 +178,10 @@ class TeamLeader(BaseAgent):
 
         await self.log(f"Team Leader {self.agent_id} managing project {project_id}")
 
+        # Initialize staging environment for self-evolution
+        evolver = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+        evolver.prepare_staging()
+
         # Track active projects
         active_projects = self.memory.get_knowledge("active_projects") or []
         if project_id not in active_projects:
@@ -273,7 +279,7 @@ class Planner(BaseAgent):
         for line in todo_list.split("\n"):
             if line.startswith("TASK:"):
                 task_desc = line.replace("TASK:", "").strip()
-                self.memory.create_task(f"{project_id}: {task_desc}", assigned_to="Coder")
+                self.memory.create_task(f"{project_id}: {task_desc}", assigned_to="Coder", project_id=project_id)
         return todo_list
 
 class Coder(BaseAgent):
@@ -284,21 +290,55 @@ class Coder(BaseAgent):
         await self.log(f"Coding task: {task}")
         project_id = task.split(":")[0] if ":" in task else "unknown"
 
-        prompt = f"Write the Python code to solve this task:\n{task}\nProvide ONLY the code."
-        code = await self.think(prompt)
+        prompt = (
+            f"Write the Python code to solve this task:\n{task}\n"
+            "Your response MUST be in the following format:\n"
+            "FILEPATH: path/to/file.py\n"
+            "CODE: \n"
+            "```python\n"
+            "# your code here\n"
+            "```"
+        )
+        response = await self.think(prompt)
+
+        # Extract FILEPATH and CODE
+        filepath = "unknown_file.py"
+        code = ""
+        try:
+            if "FILEPATH:" in response:
+                filepath = response.split("FILEPATH:")[1].split("\n")[0].strip()
+            if "CODE:" in response:
+                code_part = response.split("CODE:")[1]
+                if "```python" in code_part:
+                    code = code_part.split("```python")[1].split("```")[0].strip()
+                elif "```" in code_part:
+                    code = code_part.split("```")[1].split("```")[0].strip()
+                else:
+                    code = code_part.strip()
+        except Exception as e:
+            await self.log(f"Failed to parse code response: {e}")
+
+        if code:
+            # Stage the code for self-evolution
+            try:
+                evolver = SelfEvolutionManager(settings.WORKSPACE_DIR, settings.STAGING_DIR)
+                evolver.apply_change_to_staging(filepath, code)
+                await self.log(f"Staged change to {filepath}")
+            except Exception as e:
+                await self.log(f"Failed to stage change: {e}")
 
         # Publish result to the event bus
         self.memory.publish_event("worker/response", {
             "project_id": project_id,
             "role": "Coder",
             "task": task,
-            "result": code,
+            "result": code or response,
             "status": "pending_review"
         })
 
         # Verify and review before committing
-        self.memory.create_task(f"{project_id}: Review this code for flaws:\n{code}", assigned_to="Reviewer")
-        return code
+        self.memory.create_task(f"{project_id}: Review this code for flaws:\n{code or response}", assigned_to="Reviewer", project_id=project_id)
+        return code or response
 
 class Reviewer(BaseAgent):
     async def handle_task(self, task: Dict[str, Any]) -> str:
@@ -306,10 +346,11 @@ class Reviewer(BaseAgent):
         if "APPROVED" not in result:
             # This logic might be better placed in the orchestrator or project manager,
             # but we'll keep it here for now to maintain parity with existing behavior.
+            project_id = task.get('project_id')
             self.memory.create_task(
                 f"Fix flaws in previous work based on review: {result}\nOriginal Task: {task['description']}",
                 assigned_to="Coder",
-                project_id=task.get('project_id')
+                project_id=project_id
             )
         return result
 
