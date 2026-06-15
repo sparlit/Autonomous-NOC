@@ -19,8 +19,7 @@ class Analyst(BaseAgent):
         self.memory.create_task(
             f"FIX: {analysis}",
             assigned_to="Coder",
-            project_id=project_id,
-            priority=10
+            project_id=project_id
         )
         self.memory.publish_event("analysis/completed", {
             "strategy": analysis,

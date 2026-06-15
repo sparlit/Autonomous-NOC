@@ -16,32 +16,21 @@ class LLMProvider:
         override = memory.get_knowledge("system/model_override")
         current_model = override if override else self.model
 
-        max_retries = 3
-        retry_delay = 2
+        start_time = asyncio.get_event_loop().time()
+        try:
+            if self.provider == "openrouter":
+                response = await self._openrouter_complete(prompt, system_prompt, current_model)
+            elif self.provider == "ollama":
+                response = await self._ollama_complete(prompt, system_prompt, current_model)
+            else:
+                raise ValueError(f"Unknown provider: {self.provider}")
 
-        for attempt in range(max_retries):
-            start_time = asyncio.get_event_loop().time()
-            try:
-                if self.provider == "openrouter":
-                    response = await self._openrouter_complete(prompt, system_prompt, current_model)
-                elif self.provider == "ollama":
-                    response = await self._ollama_complete(prompt, system_prompt, current_model)
-                else:
-                    raise ValueError(f"Unknown provider: {self.provider}")
-
-                end_time = asyncio.get_event_loop().time()
-                self._record_telemetry(prompt, response, (end_time - start_time) * 1000)
-                return response
-            except (httpx.HTTPStatusError, httpx.RequestError) as e:
-                # Retry on transient HTTP errors
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(retry_delay * (attempt + 1))
-                    continue
-                self._record_error(str(e))
-                raise
-            except Exception as e:
-                self._record_error(str(e))
-                raise
+            end_time = asyncio.get_event_loop().time()
+            self._record_telemetry(prompt, response, (end_time - start_time) * 1000)
+            return response
+        except Exception as e:
+            self._record_error(str(e))
+            raise
 
     def _record_telemetry(self, prompt, response, duration_ms):
         hub = TelemetryHub(Memory(settings.DB_PATH))
