@@ -37,8 +37,6 @@ class SecurityAgent(BaseAgent):
 
         self.memory.publish_event("security/audit-complete", {
             "target": target,
-            "report": report,
-            "findings": findings,
-            "vulnerabilities": vulnerabilities
+            "report": report
         })
         return report

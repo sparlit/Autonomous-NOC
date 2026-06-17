@@ -6,3 +6,5 @@ nanoc/workspace/
 nanoc/staging/
 nanoc_backup/
 .env
+nanoc/inbox/bulk_task_*.txt
+*.log
