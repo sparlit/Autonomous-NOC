@@ -26,8 +26,7 @@ class AutoHealer(BaseAgent):
         self.memory.create_task(
             f"FIX for task {task_id}: {fix_suggestion}\nOriginal description: {description}",
             assigned_to="Coder",
-            project_id=project_id,
-            priority=10 # Higher priority for fixes
+            project_id=project_id
         )
 
         await self.log(f"Created fix task for {task_id}")

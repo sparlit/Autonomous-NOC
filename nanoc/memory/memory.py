@@ -173,12 +173,12 @@ class Memory:
                 return json.loads(row[0])
             return None
 
-    def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None, priority: int = 0) -> int:
+    def create_task(self, description: str, assigned_to: Optional[str] = None, parent_id: Optional[int] = None, project_id: Optional[str] = None) -> int:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO tasks (description, assigned_to, status, parent_id, project_id, priority, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (description, assigned_to, 'pending', parent_id, project_id, priority, datetime.now(), datetime.now()))
+                INSERT INTO tasks (description, assigned_to, status, parent_id, project_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (description, assigned_to, 'pending', parent_id, project_id, datetime.now(), datetime.now()))
             conn.commit()
             return cursor.lastrowid
