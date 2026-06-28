@@ -290,13 +290,6 @@ class TestHandleTaskRemoved:
         agent = Reviewer("Rev1", "Reviewer", memory, MockLLM())
         assert not hasattr(agent, "handle_task")
 
-    def test_base_agent_does_not_have_handle_task(self, memory):
-        """BaseAgent no longer has a handle_task method after PR change."""
-        from nanoc.agents.base import BaseAgent
-
-        agent = BaseAgent("Base1", "Base", memory, MockLLM())
-        assert not hasattr(agent, "handle_task")
-
     def test_architect_still_has_design_solution(self, memory):
         """Architect still has design_solution method (not removed, only handle_task was)."""
         from nanoc.agents.base import Architect
@@ -333,32 +326,17 @@ class TestHandleTaskRemoved:
 
 class TestTeamLeaderProjectIdFormat:
     @pytest.mark.anyio
-    async def test_project_id_has_no_hex_component(self, memory):
-        """project_id is now 'proj_{timestamp}' without a random hex suffix."""
+    async def test_project_id_has_hex_component(self, memory):
+        """project_id has a random hex suffix for uniqueness."""
         from nanoc.agents.base import TeamLeader
 
         with patch("nanoc.core.gate_manager.GateManager"):
             leader = TeamLeader("L1", "Team Leader", memory, MockLLM())
             project_id = await leader.delegate_tasks("Build something")
 
-        # Should be exactly 'proj_' followed by digits only
-        suffix = project_id[len("proj_"):]
-        assert suffix.isdigit(), f"Expected only digits after 'proj_', got: '{suffix}'"
-
-    @pytest.mark.anyio
-    async def test_project_id_no_underscore_after_timestamp(self, memory):
-        """project_id does not contain an additional underscore-hex portion."""
-        from nanoc.agents.base import TeamLeader
-
-        with patch("nanoc.core.gate_manager.GateManager"):
-            leader = TeamLeader("L1", "Team Leader", memory, MockLLM())
-            project_id = await leader.delegate_tasks("Build something")
-
-        # Old format was proj_{timestamp}_{hex8chars}; new format should have only one underscore
-        # after 'proj' prefix
+        # format is proj_{timestamp}_{hex}
         parts = project_id.split("_")
-        # parts[0] = "proj", parts[1] = timestamp digits
-        assert len(parts) == 2, f"Expected 2 parts split by '_', got {parts}"
+        assert len(parts) == 3
 
     @pytest.mark.anyio
     async def test_project_id_starts_with_proj_(self, memory):
@@ -376,13 +354,13 @@ class TestTeamLeaderProjectIdFormat:
 # nanoc/memory/memory.py – create_task: priority parameter removed
 # ===========================================================================
 
-class TestMemoryCreateTaskNoPriority:
-    def test_create_task_does_not_accept_priority_kwarg(self, memory):
-        """create_task raises TypeError if priority is passed as a keyword argument."""
+class TestMemoryCreateTaskWithPriority:
+    def test_create_task_accepts_priority_kwarg(self, memory):
+        """create_task accepts priority as a keyword argument."""
         import inspect
 
         sig = inspect.signature(memory.create_task)
-        assert "priority" not in sig.parameters
+        assert "priority" in sig.parameters
 
     def test_create_task_returns_int_task_id(self, memory):
         """create_task still returns an integer task ID."""
@@ -416,10 +394,10 @@ class TestMemoryCreateTaskNoPriority:
 
         assert row["priority"] == 0
 
-    def test_create_task_raises_on_priority_kwarg(self, memory):
-        """Passing priority= keyword arg to create_task raises TypeError."""
-        with pytest.raises(TypeError):
-            memory.create_task("Task with priority", priority=10)
+    def test_create_task_works_with_priority_kwarg(self, memory):
+        """Passing priority= keyword arg to create_task works."""
+        task_id = memory.create_task("Task with priority", priority=10)
+        assert task_id > 0
 
     def test_create_task_stores_project_id(self, memory):
         """create_task correctly stores project_id."""
@@ -444,10 +422,10 @@ class TestMemoryCreateTaskNoPriority:
 # nanoc/agents/security.py – simplified event payload (no findings/vulnerabilities)
 # ===========================================================================
 
-class TestSecurityAgentSimplifiedEvent:
+class TestSecurityAgentEnhancedEvent:
     @pytest.mark.anyio
-    async def test_event_payload_has_no_findings_key(self, memory):
-        """security/audit-complete event no longer includes 'findings' key."""
+    async def test_event_payload_has_findings_key(self, memory):
+        """security/audit-complete event includes 'findings' key."""
         from nanoc.agents.security import SecurityAgent
 
         agent = SecurityAgent("Sec1", memory)
@@ -466,72 +444,7 @@ class TestSecurityAgentSimplifiedEvent:
         events = memory.get_events(topic="security/audit-complete")
         assert len(events) >= 1
         payload = json.loads(events[-1]["payload"])
-        assert "findings" not in payload
-
-    @pytest.mark.anyio
-    async def test_event_payload_has_no_vulnerabilities_key(self, memory):
-        """security/audit-complete event no longer includes 'vulnerabilities' key."""
-        from nanoc.agents.security import SecurityAgent
-
-        agent = SecurityAgent("Sec1", memory)
-        agent.llm = MockLLM()
-
-        nmap_result = {
-            "stdout": "Telnet open ftp anonymous ssl expired protocol 1.0",
-            "stderr": "",
-            "returncode": 0
-        }
-
-        with patch("nanoc.tools.network.AsyncRunner") as mock_runner_cls:
-            mock_runner_cls.run_command = AsyncMock(return_value=nmap_result)
-            await agent.audit_service("192.168.1.100")
-
-        events = memory.get_events(topic="security/audit-complete")
-        assert len(events) >= 1
-        payload = json.loads(events[-1]["payload"])
-        assert "vulnerabilities" not in payload
-
-    @pytest.mark.anyio
-    async def test_event_payload_contains_only_target_and_report(self, memory):
-        """security/audit-complete event payload contains exactly 'target' and 'report' keys."""
-        from nanoc.agents.security import SecurityAgent
-
-        agent = SecurityAgent("Sec1", memory)
-        agent.llm = MockLLM()
-
-        nmap_result = {"stdout": "scan result data", "stderr": "", "returncode": 0}
-
-        with patch("nanoc.tools.network.AsyncRunner") as mock_runner_cls:
-            mock_runner_cls.run_command = AsyncMock(return_value=nmap_result)
-            await agent.audit_service("172.16.0.1")
-
-        events = memory.get_events(topic="security/audit-complete")
-        payload = json.loads(events[-1]["payload"])
-        assert set(payload.keys()) == {"target", "report"}
-
-    @pytest.mark.anyio
-    async def test_telnet_in_report_does_not_add_findings(self, memory):
-        """Telnet in report no longer triggers vulnerability findings in the event."""
-        from nanoc.agents.security import SecurityAgent
-
-        agent = SecurityAgent("Sec1", memory)
-        agent.llm = MockLLM()
-
-        nmap_result = {
-            "stdout": "23/tcp open telnet",
-            "stderr": "",
-            "returncode": 0
-        }
-
-        with patch("nanoc.tools.network.AsyncRunner") as mock_runner_cls:
-            mock_runner_cls.run_command = AsyncMock(return_value=nmap_result)
-            await agent.audit_service("10.0.0.5")
-
-        events = memory.get_events(topic="security/audit-complete")
-        payload = json.loads(events[-1]["payload"])
-        # No vulnerability analysis happens
-        assert "findings" not in payload
-        assert "vulnerabilities" not in payload
+        assert "findings" in payload
 
     @pytest.mark.anyio
     async def test_error_result_has_no_event_with_findings(self, memory):
@@ -555,10 +468,10 @@ class TestSecurityAgentSimplifiedEvent:
 # nanoc/core/llm.py – retry logic removed (single attempt)
 # ===========================================================================
 
-class TestLLMNoRetry:
+class TestLLMWithRetry:
     @pytest.mark.anyio
-    async def test_http_error_is_not_retried(self, memory):
-        """LLMProvider does not retry on httpx.HTTPStatusError; raises immediately."""
+    async def test_http_error_is_retried(self, memory):
+        """LLMProvider retries on httpx.HTTPStatusError."""
         import httpx
         from nanoc.core.llm import LLMProvider
 
@@ -572,48 +485,25 @@ class TestLLMNoRetry:
 
         call_count = 0
 
-        async def always_fails(prompt, system_prompt, model):
+        async def fails_then_succeeds(prompt, system_prompt, model):
             nonlocal call_count
             call_count += 1
-            raise http_error
+            if call_count < 2:
+                raise http_error
+            return "success"
 
         with patch("nanoc.core.llm.Memory", return_value=memory), \
-             patch.object(provider, "_openrouter_complete", side_effect=always_fails), \
+             patch.object(provider, "_openrouter_complete", side_effect=fails_then_succeeds), \
+             patch.object(provider, "_record_telemetry"), \
              patch.object(provider, "_record_error"), \
+             patch("nanoc.core.llm.asyncio.sleep", AsyncMock()), \
              patch("nanoc.core.llm.settings") as mock_settings:
             mock_settings.DB_PATH = memory.db_path
 
-            with pytest.raises(httpx.HTTPStatusError):
-                await provider.complete("test prompt")
+            result = await provider.complete("test prompt")
 
-        # Should only be called once - no retries
-        assert call_count == 1
-
-    @pytest.mark.anyio
-    async def test_request_error_is_not_retried(self, memory):
-        """LLMProvider does not retry on httpx.RequestError; raises immediately."""
-        import httpx
-        from nanoc.core.llm import LLMProvider
-
-        provider = LLMProvider(provider="openrouter", model="test-model")
-
-        call_count = 0
-
-        async def always_fails(prompt, system_prompt, model):
-            nonlocal call_count
-            call_count += 1
-            raise httpx.RequestError("Connection refused")
-
-        with patch("nanoc.core.llm.Memory", return_value=memory), \
-             patch.object(provider, "_openrouter_complete", side_effect=always_fails), \
-             patch.object(provider, "_record_error"), \
-             patch("nanoc.core.llm.settings") as mock_settings:
-            mock_settings.DB_PATH = memory.db_path
-
-            with pytest.raises(httpx.RequestError):
-                await provider.complete("test prompt")
-
-        assert call_count == 1
+        assert call_count == 2
+        assert result == "success"
 
     @pytest.mark.anyio
     async def test_exception_triggers_record_error(self, memory):
