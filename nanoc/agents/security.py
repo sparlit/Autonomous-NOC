@@ -31,14 +31,8 @@ class SecurityAgent(BaseAgent):
         if "expired" in report.lower() and "ssl" in report.lower():
             vulnerabilities.append("Expired SSL/TLS certificate detected.")
 
-        findings = "No major vulnerabilities identified." if not vulnerabilities else "\n".join(vulnerabilities)
-
-        await self.log(f"Vulnerability Analysis for {target}: {findings}")
-
         self.memory.publish_event("security/audit-complete", {
             "target": target,
-            "report": report,
-            "findings": findings,
-            "vulnerabilities": vulnerabilities
+            "report": report
         })
         return report

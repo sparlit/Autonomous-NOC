@@ -1,0 +1,10 @@
+Project: Autonomous Network Operating Center
+Core principle: use only 100% FOSS software, tools and utilities
+Multi Thread Parallel Processing capability
+
+how can we improve and enhance it further.
+analyse and identify, find and fix any gaps or blind spots or dead ends or loop holes or wrappers or loose ends or dummies in the project.
+while improving or enhancing, do not remove any features or functionalities.
+
+Continuous Codebase Improvement
+repeat the above until all features and functions are added and there is nothing left to improve or enhance
