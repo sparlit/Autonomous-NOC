@@ -1,45 +1,89 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import WebSocket, WebSocketDisconnect
-from app.api.endpoints import monitoring, alerts, websockets, data, terminal
-from app.core.config import settings
 import asyncio
-from nanoc.memory.memory import Memory
-from nanoc.core.event_bus import EventBus
-from nanoc.core.config import settings as nanoc_settings
+import json
+import logging
+import sqlite3
 from contextlib import asynccontextmanager
+from datetime import datetime
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.endpoints import alerts, data, monitoring, terminal, websockets
+from app.core.config import settings
+from app.core.streaming import StreamEngine, engine
+from nanoc.core.config import settings as nanoc_settings
+from nanoc.core.event_bus import EventBus
+from nanoc.memory.memory import Memory
+
+logger = logging.getLogger(__name__)
+
+
+def _latest_event_id() -> int:
+    """
+    Highest event id already stored in the nanoc database.
+
+    The event bus starts polling from id 0, which on a restart would replay the
+    entire event history to every connected client. Seeding the bus cursor at
+    the current maximum makes the stream "from now on", which is what a live
+    dashboard wants.
+
+    Returns:
+        int: Highest ``events.id``, or 0 for an empty database.
+    """
+    try:
+        with sqlite3.connect(nanoc_settings.DB_PATH) as conn:
+            row = conn.execute("SELECT COALESCE(MAX(id), 0) FROM events").fetchone()
+            return int(row[0] or 0)
+    except Exception:
+        return 0
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start Event Bus to bridge SQLite events to WebSockets
     """
-    Manage the application lifespan by starting an EventBus backed by SQLite and wiring its events to WebSocket broadcasts.
-    
-    Initializes Memory using nanoc_settings.DB_PATH, creates an EventBus, subscribes a broadcast handler to all topics, and starts the EventBus polling loop as a background task for the app lifetime. On shutdown, cancels the polling task and awaits its completion, suppressing asyncio.CancelledError.
+    Wire the event bus to the websocket fan-out and run the live producers.
+
+    A single EventBus subscribes ``"*"`` to broadcast every event as a
+    websocket message, and the :class:`StreamEngine` publishes metric, alert and
+    data-update events into that same bus on its own cadence. On shutdown both
+    tasks are cancelled and awaited.
     """
     memory = Memory(nanoc_settings.DB_PATH)
     bus = EventBus(memory)
+    bus.last_seen_id = _latest_event_id()
 
     async def broadcast_event(payload):
         """
-        Broadcasts a payload to all connected WebSocket clients.
-        
+        Forward one event-bus payload to every connected websocket client.
+
         Parameters:
-            payload: The message to send to connected WebSocket clients (format depends on the WebSocket manager).
+            payload: Event body, already enriched with ``_topic``/``_event_id``/
+                ``_timestamp`` by the bus.
         """
-        await websockets.manager.broadcast(payload)
+        await websockets.manager.broadcast(websockets.envelope(payload))
 
     # Subscribe to all relevant topics
     bus.subscribe("*", broadcast_event)
+
+    engine.bind(bus)
     polling_task = asyncio.create_task(bus.start_polling())
+    stream_task = asyncio.create_task(engine.run())
+    logger.info(
+        "NOC live streaming active: %s websocket clients at startup",
+        websockets.manager.connection_count,
+    )
 
     yield
 
-    polling_task.cancel()
-    try:
-        await polling_task
-    except asyncio.CancelledError:
-        pass
+    engine.stop()
+    for task in (stream_task, polling_task):
+        task.cancel()
+    for task in (stream_task, polling_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 
@@ -56,22 +100,72 @@ app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])
 app.include_router(data.router, prefix="/api/data", tags=["data"])
 app.include_router(terminal.router, prefix="/api/terminal", tags=["terminal"])
 
+
+def build_hello_message(stream: StreamEngine) -> dict:
+    """
+    Build the first message a client receives after connecting.
+
+    It carries the topics the server streams and the last metric snapshot, so a
+    dashboard that has just reconnected can repaint immediately instead of
+    waiting for the next sampling tick.
+
+    Parameters:
+        stream (StreamEngine): Engine holding the cached snapshot.
+
+    Returns:
+        dict: ``{"type": "hello", ...}`` websocket message.
+    """
+    return {
+        "type": "hello",
+        "topic": "system/hello",
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "topics": ["metric", "alert", "data_update", "agent"],
+        "snapshot": stream.last_snapshot,
+        "active_alerts": len(stream.active_alerts),
+        "auth": "none",
+    }
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
-    Manage a WebSocket client connection and keep it registered with the connection manager.
-    
-    Registers the provided WebSocket with the application's connection manager, awaits incoming messages to maintain the connection lifecycle, and unregisters the socket from the manager when the client disconnects.
-    
+    Manage a websocket client connection and keep it registered with the manager.
+
+    Registers the socket, sends a ``hello`` frame describing the stream, then
+    stays in a receive loop so the connection lifecycle is observed and ``ping``
+    frames are answered with ``pong``. The socket is unregistered on disconnect.
+
+    NOTE: ``/ws`` is unauthenticated (unchanged from before this change) — it
+    carries read-only monitoring data. Authentication is tracked as part of the
+    security pass; the terminal surface keeps its own ``?token=`` handshake.
+
     Parameters:
         websocket (WebSocket): The client WebSocket connection to manage.
     """
     await websockets.manager.connect(websocket)
+    await websockets.manager.send_to(websocket, build_hello_message(engine))
     try:
         while True:
-            # Keep connection alive
-            await websocket.receive_text()
+            raw = await websocket.receive_text()
+            try:
+                message = json.loads(raw)
+            except (TypeError, ValueError):
+                continue  # clients are allowed to send opaque keep-alives
+            if isinstance(message, dict) and message.get("type") == "ping":
+                await websockets.manager.send_to(
+                    websocket,
+                    {
+                        "type": "pong",
+                        "topic": "system/pong",
+                        "ts": datetime.now().isoformat(timespec="seconds"),
+                        "echo": message.get("ts"),
+                    },
+                )
     except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # noqa: BLE001 - never leak a registration
+        logger.debug("Websocket closed with error: %s", exc)
+    finally:
         websockets.manager.disconnect(websocket)
 
 
@@ -79,8 +173,25 @@ async def websocket_endpoint(websocket: WebSocket):
 async def health_check():
     """
     Provide a simple health status for the service.
-    
+
     Returns:
         dict: JSON-compatible object with `"status": "ok"`.
     """
     return {"status": "ok"}
+
+
+@app.get("/api/stream/status")
+async def stream_status():
+    """
+    Expose the live stream's health for the dashboard's connection chip.
+
+    Returns:
+        dict: Connected client count, last snapshot and active alert count.
+    """
+    snapshot = engine.last_snapshot
+    return {
+        "clients": websockets.manager.connection_count,
+        "last_snapshot_at": (snapshot or {}).get("timestamp"),
+        "active_alerts": len(engine.active_alerts),
+        "topics": ["metric/snapshot", "alert/created", "alert/resolved", "data/updated"],
+    }

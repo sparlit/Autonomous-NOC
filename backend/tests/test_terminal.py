@@ -23,6 +23,7 @@ from app.api.endpoints.terminal import TerminalSession
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from main import app
+from tests.route_utils import route_paths
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +420,7 @@ class TestOnPtyReadCallback:
 class TestTerminalWebsocketRoute:
     def test_websocket_route_registered(self):
         """The /api/terminal/ws route must exist on the app."""
-        routes = {route.path for route in app.routes}
+        routes = route_paths(app)
         assert "/api/terminal/ws" in routes
 
     def test_websocket_connect_accepted_and_session_started(self):

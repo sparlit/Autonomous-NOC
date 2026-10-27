@@ -1,10 +1,50 @@
+import copy
+from typing import Any, Dict, List
+
 from fastapi import APIRouter
-from nanoc.memory.memory import Memory
+
 from nanoc.core.config import settings as nanoc_settings
+from nanoc.memory.memory import Memory
 import sqlite3
 
 router = APIRouter()
 memory = Memory(nanoc_settings.DB_PATH)
+
+#: Knowledge key the topology is persisted under.
+TOPOLOGY_KNOWLEDGE_KEY = "network_topology"
+
+#: Default graph used when nothing has been persisted yet.
+DEFAULT_TOPOLOGY: Dict[str, List[Dict[str, Any]]] = {
+    "nodes": [
+        {"id": "Core-Rtr-01", "label": "Core Router", "type": "router", "status": "online"},
+        {"id": "Dist-Sw-01", "label": "Distribution Switch 1", "type": "switch", "status": "online"},
+        {"id": "Dist-Sw-02", "label": "Distribution Switch 2", "type": "switch", "status": "online"},
+        {"id": "Access-Sw-01", "label": "Access Switch 1", "type": "switch", "status": "warning"},
+    ],
+    "edges": [
+        {"from": "Core-Rtr-01", "to": "Dist-Sw-01", "label": "10Gbps"},
+        {"from": "Core-Rtr-01", "to": "Dist-Sw-02", "label": "10Gbps"},
+        {"from": "Dist-Sw-01", "to": "Access-Sw-01", "label": "1Gbps"},
+    ],
+}
+
+def build_topology() -> Dict[str, Any]:
+    """
+    Provide the network topology used by the live map.
+
+    Prefers the stored knowledge document and falls back to the default graph.
+    Shared by the REST endpoint and the metric/alert snapshot so device counts
+    on the dashboard always match what the map draws.
+
+    Returns:
+        dict: A mapping with ``nodes`` and ``edges`` lists.
+    """
+    topology = memory.get_knowledge(TOPOLOGY_KNOWLEDGE_KEY)
+    if topology:
+        return topology
+    # Copy so a caller cannot mutate the module-level default in place.
+    return copy.deepcopy(DEFAULT_TOPOLOGY)
+
 
 @router.get("/topology")
 async def get_topology():
@@ -25,23 +65,8 @@ async def get_topology():
                 - "to": destination node id string
                 - "label": link descriptor (e.g., bandwidth)
     """
-    topology = memory.get_knowledge("network_topology")
-    if topology:
-        return topology
+    return build_topology()
 
-    # Default fallback
-    nodes = [
-        {"id": "Core-Rtr-01", "label": "Core Router", "type": "router", "status": "online"},
-        {"id": "Dist-Sw-01", "label": "Distribution Switch 1", "type": "switch", "status": "online"},
-        {"id": "Dist-Sw-02", "label": "Distribution Switch 2", "type": "switch", "status": "online"},
-        {"id": "Access-Sw-01", "label": "Access Switch 1", "type": "switch", "status": "warning"},
-    ]
-    edges = [
-        {"from": "Core-Rtr-01", "to": "Dist-Sw-01", "label": "10Gbps"},
-        {"from": "Core-Rtr-01", "to": "Dist-Sw-02", "label": "10Gbps"},
-        {"from": "Dist-Sw-01", "to": "Access-Sw-01", "label": "1Gbps"},
-    ]
-    return {"nodes": nodes, "edges": edges}
 
 @router.get("/agents")
 async def get_agents_status():
@@ -56,6 +81,7 @@ async def get_agents_status():
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM agents")
         return [dict(row) for row in cursor.fetchall()]
+
 
 @router.get("/tasks")
 async def get_tasks(project_id: str = None):
@@ -76,3 +102,44 @@ async def get_tasks(project_id: str = None):
         else:
             cursor.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT 50")
         return [dict(row) for row in cursor.fetchall()]
+
+
+def data_fingerprint() -> Dict[str, Any]:
+    """
+    Cheap fingerprint of the data the websocket stream watches for changes.
+
+    The streamer compares this every tick and only emits a ``data_update`` when
+    something actually moved, so idle systems stay quiet on the wire.
+
+    Returns:
+        dict: ``tasks`` (count + newest update), ``agents`` (count) and
+        ``topology`` (node count + a digest of the drawn graph).
+    """
+    import hashlib
+    import json
+
+    topology = build_topology()
+    digest = hashlib.sha1(
+        json.dumps(topology, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:12]
+
+    tasks_count = 0
+    tasks_updated = None
+    agents_count = 0
+    try:
+        with sqlite3.connect(nanoc_settings.DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*), MAX(updated_at) FROM tasks")
+            row = cursor.fetchone()
+            tasks_count = int(row[0] or 0)
+            tasks_updated = str(row[1]) if row[1] else None
+            cursor.execute("SELECT COUNT(*) FROM agents")
+            agents_count = int(cursor.fetchone()[0] or 0)
+    except Exception:
+        pass
+
+    return {
+        "tasks": f"{tasks_count}:{tasks_updated}",
+        "agents": str(agents_count),
+        "topology": f"{len(topology.get('nodes') or [])}:{digest}",
+    }

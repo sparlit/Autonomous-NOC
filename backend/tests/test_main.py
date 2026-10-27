@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from fastapi.testclient import TestClient
 from main import app
+from tests.route_utils import route_paths
 
 client = TestClient(app)
 
@@ -45,7 +46,7 @@ class TestHealthEndpoint:
 
 class TestRouteRegistration:
     def _route_paths(self):
-        return {r.path for r in app.routes}
+        return route_paths(app)
 
     def test_terminal_ws_route_registered(self):
         assert "/api/terminal/ws" in self._route_paths()
