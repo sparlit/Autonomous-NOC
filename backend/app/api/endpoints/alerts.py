@@ -1,13 +1,25 @@
-from fastapi import APIRouter, HTTPException
+import json
+from typing import Any, Dict, List
+
 import httpx
+from fastapi import APIRouter
+
 from app.core.config import settings
+from nanoc.core.config import settings as nanoc_settings
+from nanoc.memory.memory import Memory
 
 router = APIRouter()
 
-@router.get("/summary")
-async def get_alerts_summary():
+#: Topic the event bus uses for gate failures, which are treated as alerts.
+GATE_FAILURE_TOPIC = "gate/failed"
+
+
+def build_alerts_summary() -> Dict[str, Any]:
     """
-    Returns a summary of active alerts from Keep.
+    Provide the dashboard alert summary.
+
+    Returns:
+        dict: ``active_alerts``, ``urgent``, ``warning`` and ``recent_events``.
     """
     # Mocking for now
     return {
@@ -21,10 +33,13 @@ async def get_alerts_summary():
         ]
     }
 
-@router.get("/all")
-async def get_all_alerts():
+
+async def build_all_alerts() -> Dict[str, Any]:
     """
-    Fetch all alerts from Keep or local metrics if Keep is unreachable.
+    Fetch all alerts from Keep, falling back to local gate failures.
+
+    Returns:
+        dict: ``{"alerts": [...], "source": ...}`` or ``{"alerts": [], "error": ...}``.
     """
     async with httpx.AsyncClient() as client:
         try:
@@ -34,26 +49,38 @@ async def get_all_alerts():
                 if response.status_code == 200:
                     return response.json()
 
-            # Fallback: Check local events for gate failures which are like alerts
-            from nanoc.memory.memory import Memory
-            from nanoc.core.config import settings as nanoc_settings
-            # Note: backend might need its own way to access nanoc DB
+            # Fallback: check local events for gate failures, which are alert-like
             mem = Memory(nanoc_settings.DB_PATH)
-            failures = mem.get_events(topic="gate/failed", since_id=0)
+            failures = mem.get_events(topic=GATE_FAILURE_TOPIC, since_id=0)
 
-            alerts = []
-            for f in failures:
-                import json
-                payload = json.loads(f['payload'])
+            alerts: List[Dict[str, Any]] = []
+            for failure in failures:
+                payload = json.loads(failure["payload"])
                 alerts.append({
-                    "id": f['id'],
+                    "id": failure["id"],
                     "source": "nanoc-internal",
                     "title": f"Gate Failure: {payload.get('type')}",
                     "description": f"Project {payload.get('project_id')} failed at {payload.get('type')} gate.",
                     "severity": "critical",
-                    "timestamp": f['timestamp']
+                    "timestamp": failure["timestamp"],
                 })
 
             return {"alerts": alerts, "source": "local_fallback"}
         except Exception as e:
             return {"alerts": [], "error": str(e)}
+
+
+@router.get("/summary")
+async def get_alerts_summary():
+    """
+    Returns a summary of active alerts from Keep.
+    """
+    return build_alerts_summary()
+
+
+@router.get("/all")
+async def get_all_alerts():
+    """
+    Fetch all alerts from Keep or local metrics if Keep is unreachable.
+    """
+    return await build_all_alerts()

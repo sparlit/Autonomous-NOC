@@ -2,9 +2,9 @@
 
 import React, { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { useLiveFeed, API_URL } from '@/hooks/use-live-data';
 
 interface TopologyNode {
   id: string;
@@ -28,17 +28,30 @@ const fetchTopology = async () => {
 /**
  * Renders a live, force-directed network topology chart using ECharts and keeps it updated.
  *
- * Polls the topology API every 10 seconds, displays a centered "Initializing Topology..." placeholder while loading, maps nodes and edges into the graph series (node color reflects status and symbol reflects type), and attaches a window resize listener; the chart is disposed on unmount.
+ * Refetches when the websocket reports a topology change (falling back to a 10s poll
+ * while the stream is down), displays a centered "Initializing Topology..." placeholder while loading, maps nodes and edges into the graph series (node color reflects status and symbol reflects type), and attaches a window resize listener; the chart is disposed on unmount.
  *
  * @returns The React element containing the topology chart or the loading placeholder
  */
 export default function TopologyMap() {
   const chartRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
+  // The backend only emits `data_update` when the graph actually moved, so the
+  // socket becomes the trigger and polling is reserved for a dropped stream.
+  const live = useLiveFeed({ types: ['data_update'] });
+
   const { data: topology, isLoading } = useQuery({
     queryKey: ['topology'],
     queryFn: fetchTopology,
-    refetchInterval: 10000,
+    refetchInterval: live.pollInterval(10000),
   });
+
+  useEffect(() => {
+    if (!live.latest) return;
+    const kinds = live.latest.kinds;
+    if (Array.isArray(kinds) && !kinds.includes('topology')) return;
+    queryClient.invalidateQueries({ queryKey: ['topology'] });
+  }, [live.latest, queryClient]);
 
   useEffect(() => {
     if (!chartRef.current || !topology) return;
