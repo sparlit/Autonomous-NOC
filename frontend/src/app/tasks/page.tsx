@@ -1,15 +1,22 @@
 'use client'
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { LiveStateChip } from "@/components/live/live-state-chip";
+import { useLiveFeed, API_URL } from "@/hooks/use-live-data";
 import { CheckCircle2, Clock, AlertCircle } from "lucide-react";
 
 /**
- * Renders a task board that polls the tasks API every 5 seconds and displays current tasks with status, project, description, assignee, and last-updated time.
+ * Renders the task board.
  *
- * The component reads the API base from `NEXT_PUBLIC_API_URL` (falls back to `http://localhost:8000`), fetches `/api/data/tasks` on mount and updates state only for successful HTTP responses. The polling interval is cleared on unmount.
+ * The task list is fetched over REST for the first paint and then kept current
+ * by the websocket `data_update` event: the backend fingerprints the tasks
+ * table every few seconds and only emits when a row actually moved, so the
+ * board re-fetches on change instead of on a timer. Polling returns only when
+ * the stream drops.
  *
  * @returns A React element representing the task board UI.
  */
@@ -22,19 +29,28 @@ interface Task {
   updated_at: string;
 }
 
+const fetchTasks = async (): Promise<Task[]> => {
+  const res = await fetch(`${API_URL}/api/data/tasks`);
+  if (!res.ok) throw new Error('Failed to fetch tasks');
+  return res.json();
+};
+
 export default function TaskBoard() {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const queryClient = useQueryClient();
+  const live = useLiveFeed({ types: ['data_update'] });
+
+  const { data: tasks = [], isLoading } = useQuery({
+    queryKey: ['tasks'],
+    queryFn: fetchTasks,
+    refetchInterval: live.pollInterval(5000),
+  });
 
   useEffect(() => {
-    const fetchTasks = async () => {
-        const res = await fetch(`${API_URL}/api/data/tasks`);
-        if (res.ok) setTasks(await res.json());
-    };
-    fetchTasks();
-    const interval = setInterval(fetchTasks, 5000);
-    return () => clearInterval(interval);
-  }, [API_URL]);
+    if (!live.latest) return;
+    const kinds = live.latest.kinds;
+    if (Array.isArray(kinds) && !kinds.includes('tasks')) return;
+    queryClient.invalidateQueries({ queryKey: ['tasks'] });
+  }, [live.latest, queryClient]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -47,12 +63,20 @@ export default function TaskBoard() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-zinc-100">Task Board</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-3xl font-bold text-zinc-100">Task Board</h1>
+        <LiveStateChip
+          state={live.state}
+          lastMessageAt={live.lastMessageAt}
+          attempts={live.attempts}
+          label="updates"
+        />
+      </div>
 
       <Card className="bg-zinc-900/50 border-zinc-800">
         <CardHeader>
           <CardTitle>Autonomous Backlog</CardTitle>
-          <CardDescription>Real-time progress of system tasks and agent assignments.</CardDescription>
+          <CardDescription>Refreshed by websocket data_update events as tasks change state.</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -66,24 +90,32 @@ export default function TaskBoard() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tasks.map((task) => (
-                <TableRow key={task.id} className="border-zinc-800 hover:bg-zinc-800/30">
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                        {getStatusIcon(task.status)}
-                        <span className="capitalize text-xs">{task.status}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">{task.project_id || 'Global'}</TableCell>
-                  <TableCell className="max-w-md truncate text-sm">{task.description}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="bg-zinc-950">{task.assigned_to}</Badge>
-                  </TableCell>
-                  <TableCell className="text-right text-xs text-zinc-500">
-                    {new Date(task.updated_at).toLocaleTimeString()}
+              {tasks.length === 0 && !isLoading ? (
+                <TableRow className="border-zinc-800">
+                  <TableCell colSpan={5} className="text-sm text-zinc-500">
+                    No tasks recorded yet.
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                tasks.map((task) => (
+                  <TableRow key={task.id} className="border-zinc-800 hover:bg-zinc-800/30">
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                          {getStatusIcon(task.status)}
+                          <span className="capitalize text-xs">{task.status}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{task.project_id || 'Global'}</TableCell>
+                    <TableCell className="max-w-md truncate text-sm">{task.description}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="bg-zinc-950">{task.assigned_to}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right text-xs text-zinc-500">
+                      {task.updated_at ? new Date(task.updated_at).toLocaleTimeString() : '—'}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

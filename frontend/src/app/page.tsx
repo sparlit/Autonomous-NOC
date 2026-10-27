@@ -1,57 +1,136 @@
 'use client'
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, AlertCircle, Server, Clock } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import NetworkLatencyChart from "@/components/charts/NetworkLatencyChart";
-import ThroughputChart from "@/components/charts/ThroughputChart";
-import DeviceStatusChart from "@/components/charts/DeviceStatusChart";
+import { useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { Activity, AlertCircle, Radio, Server, Clock } from 'lucide-react'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import NetworkLatencyChart from '@/components/charts/NetworkLatencyChart'
+import ThroughputChart from '@/components/charts/ThroughputChart'
+import DeviceStatusChart from '@/components/charts/DeviceStatusChart'
+import { LiveStateChip } from '@/components/live/live-state-chip'
+import { API_URL } from '@/hooks/use-live-data'
+import { useLiveTelemetry, type SeriesSeed } from '@/hooks/use-live-telemetry'
 
 const fetchStatus = async () => {
-  const res = await fetch(`${API_URL}/api/monitoring/status`);
-  if (!res.ok) throw new Error("Failed to fetch status");
-  return res.json();
-};
+  const res = await fetch(`${API_URL}/api/monitoring/status`)
+  if (!res.ok) throw new Error('Failed to fetch status')
+  return res.json()
+}
 
 const fetchAlertsSummary = async () => {
-  const res = await fetch(`${API_URL}/api/alerts/summary`);
-  if (!res.ok) throw new Error("Failed to fetch alerts summary");
-  return res.json();
-};
+  const res = await fetch(`${API_URL}/api/alerts/summary`)
+  if (!res.ok) throw new Error('Failed to fetch alerts summary')
+  return res.json()
+}
+
+const fetchSeries = async (): Promise<SeriesSeed> => {
+  const res = await fetch(`${API_URL}/api/monitoring/series?limit=30`)
+  if (!res.ok) throw new Error('Failed to fetch metric series')
+  return res.json()
+}
 
 interface Event {
-  time: string;
-  event: string;
-  status: string;
+  time: string
+  event: string
+  status: string
+}
+
+interface StatusBody {
+  latency?: string
+  uptime?: string
+  traffic?: string
+  status?: string
+  backlog?: number
+}
+
+interface AlertsSummary {
+  active_alerts?: number
+  urgent?: number
+  warning?: number
+  recent_events?: Event[]
 }
 
 /**
  * Renders the monitoring dashboard for the Home page.
  *
- * Subscribes to system `status` and `alerts` data (refetching every 5000ms) and displays the executive overview, charts, and recent events.
+ * REST paints the first frame (status, alert summary, chart history); from then
+ * on every number on the page is driven by the websocket stream. Polling only
+ * resumes when the socket drops — `telemetry.pollInterval()` returns the REST
+ * interval for every state except `live`.
  *
  * @returns The Home page React element representing the monitoring dashboard
  */
 export default function Home() {
+  const seriesQuery = useQuery({ queryKey: ['metricSeries'], queryFn: fetchSeries, staleTime: 15_000 })
+  const telemetry = useLiveTelemetry(seriesQuery.data)
+
   const { data: status, isLoading: statusLoading } = useQuery({
-    queryKey: ["status"],
+    queryKey: ['status'],
     queryFn: fetchStatus,
-    refetchInterval: 5000,
-  });
+    refetchInterval: telemetry.pollInterval(5_000),
+  })
 
   const { data: alerts, isLoading: alertsLoading } = useQuery({
-    queryKey: ["alertsSummary"],
+    queryKey: ['alertsSummary'],
     queryFn: fetchAlertsSummary,
-    refetchInterval: 5000,
-  });
+    refetchInterval: telemetry.pollInterval(5_000),
+  })
+
+  const snapshot = telemetry.snapshot
+  const statusBody = status as StatusBody | undefined
+  const alertsBody = alerts as AlertsSummary | undefined
+
+  // Live values win over the REST paint; REST stays as the initial frame.
+  const latency = snapshot?.latency ?? statusBody?.latency
+  const uptime = snapshot?.uptime ?? statusBody?.uptime
+  const backlog = snapshot?.backlog ?? statusBody?.backlog
+  const activeAlerts = telemetry.activeAlertCount ?? alertsBody?.active_alerts
+  const urgent = telemetry.urgentCount ?? alertsBody?.urgent
+  const warning = telemetry.warningCount ?? alertsBody?.warning
+
+  const recentEvents = useMemo<Event[]>(() => {
+    const live: Event[] = telemetry.alerts.map((alert) => ({
+      time: (alert.timestamp ?? '').slice(11, 19) || '--:--:--',
+      event: alert.title,
+      status: alert.action === 'resolved' ? 'Resolved' : alert.severity === 'critical' ? 'Investigating' : 'Warning',
+    }))
+    const seeded = alertsBody?.recent_events ?? []
+    return [...live, ...seeded].slice(0, 6)
+  }, [telemetry.alerts, alertsBody])
+
+  const latencySeries = telemetry.latencySeries.length > 0 ? telemetry.latencySeries : undefined
+  const throughputSeries = telemetry.throughputSeries.length > 0 ? telemetry.throughputSeries : undefined
+  const deviceSeries = telemetry.deviceSeries.length > 0 ? telemetry.deviceSeries : undefined
+
+  const throughputLabel =
+    snapshot?.throughput_in_mbps !== null && snapshot?.throughput_in_mbps !== undefined
+      ? `${snapshot.throughput_in_mbps.toFixed(2)} / ${(snapshot.throughput_out_mbps ?? 0).toFixed(2)} Mbps`
+      : snapshot?.traffic
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-zinc-100">Executive Overview</h1>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2.5 font-mono text-[10px] uppercase tracking-[0.34em] text-emerald-400/80">
+            <Radio className="size-3" />
+            streamed over websocket
+          </div>
+          <h1 className="mt-2 text-3xl font-bold tracking-tight text-zinc-100">Executive Overview</h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <LiveStateChip
+            state={telemetry.state}
+            lastMessageAt={telemetry.lastMessageAt}
+            attempts={telemetry.attempts}
+            label="telemetry"
+          />
+          <span className="hidden items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900/60 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-400 sm:inline-flex">
+            {throughputLabel ?? 'throughput n/a'}
+          </span>
+        </div>
       </div>
+
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="bg-zinc-900/50 border-zinc-800">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -60,10 +139,10 @@ export default function Home() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-emerald-500">
-              {statusLoading ? "..." : status?.latency}
+              {statusLoading && !latency ? '...' : (latency ?? '—')}
             </div>
             <p className="text-xs text-muted-foreground">
-              -2ms from last hour
+              {snapshot?.prometheus_ok === false ? 'Prometheus unreachable — fallback value' : 'avg(icmp_latency_ms)'}
             </p>
           </CardContent>
         </Card>
@@ -74,10 +153,12 @@ export default function Home() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-amber-500">
-              {alertsLoading ? "..." : alerts?.active_alerts}
+              {alertsLoading && activeAlerts === undefined ? '...' : (activeAlerts ?? '—')}
             </div>
             <p className="text-xs text-muted-foreground">
-              {alertsLoading ? "..." : `${alerts?.urgent} urgent, ${alerts?.warning} warning`}
+              {urgent === null || urgent === undefined
+                ? 'tracking rule transitions live'
+                : `${urgent} urgent, ${warning ?? 0} warning`}
             </p>
           </CardContent>
         </Card>
@@ -87,12 +168,8 @@ export default function Home() {
             <Server className="h-4 w-4 text-emerald-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-emerald-500">
-              {statusLoading ? "..." : status?.uptime}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              All systems operational
-            </p>
+            <div className="text-2xl font-bold text-emerald-500">{statusLoading && !uptime ? '...' : (uptime ?? '—')}</div>
+            <p className="text-xs text-muted-foreground">All systems operational</p>
           </CardContent>
         </Card>
         <Card className="bg-zinc-900/50 border-zinc-800">
@@ -101,12 +178,8 @@ export default function Home() {
             <Clock className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-blue-500">
-              {statusLoading ? "..." : status?.backlog}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Pending autonomous actions
-            </p>
+            <div className="text-2xl font-bold text-blue-500">{statusLoading && backlog === undefined ? '...' : (backlog ?? '—')}</div>
+            <p className="text-xs text-muted-foreground">Pending autonomous actions</p>
           </CardContent>
         </Card>
       </div>
@@ -115,31 +188,37 @@ export default function Home() {
         <Card className="col-span-4 bg-zinc-900/50 border-zinc-800">
           <CardHeader>
             <CardTitle>Network Latency</CardTitle>
-            <CardDescription>
-              Last 30 minutes of ICMP response times.
-            </CardDescription>
+            <CardDescription>Rolling ICMP response times, appended on every metric frame.</CardDescription>
           </CardHeader>
           <CardContent>
-            <NetworkLatencyChart />
+            <NetworkLatencyChart data={latencySeries} />
           </CardContent>
         </Card>
         <Card className="col-span-3 bg-zinc-900/50 border-zinc-800">
           <CardHeader>
             <CardTitle>Recent Events</CardTitle>
-            <CardDescription>
-              Latest automation actions and system logs.
-            </CardDescription>
+            <CardDescription>Live alert transitions, newest first.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {alertsLoading ? (
+              {alertsLoading && recentEvents.length === 0 ? (
                 <div className="text-sm text-zinc-500">Loading events...</div>
+              ) : recentEvents.length === 0 ? (
+                <div className="text-sm text-zinc-500">No alert activity — all rules inside threshold.</div>
               ) : (
-                alerts?.recent_events?.map((item: Event, i: number) => (
-                  <div key={i} className="flex items-center text-sm">
-                    <div className="w-16 text-zinc-500 font-mono text-xs">{item.time}</div>
-                    <div className="flex-1 px-2">{item.event}</div>
-                    <div className={`font-medium ${item.status === 'Resolved' || item.status === 'Success' ? 'text-emerald-500' : 'text-amber-500'}`}>
+                recentEvents.map((item, i) => (
+                  <div key={`${item.time}-${item.event}-${i}`} className="flex items-center text-sm">
+                    <div className="w-16 shrink-0 font-mono text-xs text-zinc-500">{item.time}</div>
+                    <div className="flex-1 truncate px-2">{item.event}</div>
+                    <div
+                      className={`font-medium ${
+                        item.status === 'Resolved' || item.status === 'Success'
+                          ? 'text-emerald-500'
+                          : item.status === 'Warning'
+                            ? 'text-amber-400'
+                            : 'text-amber-500'
+                      }`}
+                    >
                       {item.status}
                     </div>
                   </div>
@@ -154,22 +233,22 @@ export default function Home() {
         <Card className="bg-zinc-900/50 border-zinc-800">
           <CardHeader>
             <CardTitle>Throughput</CardTitle>
-            <CardDescription>Real-time inbound and outbound traffic.</CardDescription>
+            <CardDescription>Host NIC rates sampled per metric frame.</CardDescription>
           </CardHeader>
           <CardContent>
-            <ThroughputChart />
+            <ThroughputChart data={throughputSeries} />
           </CardContent>
         </Card>
         <Card className="bg-zinc-900/50 border-zinc-800">
           <CardHeader>
             <CardTitle>Device Status</CardTitle>
-            <CardDescription>Inventory health overview.</CardDescription>
+            <CardDescription>Inventory health from the live topology.</CardDescription>
           </CardHeader>
           <CardContent>
-            <DeviceStatusChart />
+            <DeviceStatusChart data={deviceSeries} />
           </CardContent>
         </Card>
       </div>
     </div>
-  );
+  )
 }
