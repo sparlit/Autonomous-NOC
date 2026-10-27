@@ -17,7 +17,7 @@
  *    `live`, which is how pages degrade to polling while the socket is down
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -319,10 +319,12 @@ export function useLiveFeed(options: LiveFeedOptions = {}): LiveFeed {
       (next) => {
         setState(next)
         setAttempts(socket.getAttempts())
+        // subscribe() always sinks the current state synchronously (first
+        // subscriber via connect(), later ones via the replay), so picking the
+        // timestamp up here catches frames that predate this subscriber.
+        setLastMessageAt(socket.getLastMessageAt())
       }
     )
-    // Pick up frames that arrived before this subscriber existed.
-    setLastMessageAt(socket.getLastMessageAt())
     return unsubscribe
   }, [allowed, bufferSize, enabled])
 

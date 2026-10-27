@@ -176,8 +176,8 @@ export function useLiveTelemetry(seed?: SeriesSeed, enabled = true): LiveTelemet
     const dataUpdates: string[] = []
 
     let baseActive: number | null = null
-    let baseUrgent: number | null = null
-    let baseWarning: number | null = null
+    const baseUrgent: number | null = null
+    const baseWarning: number | null = null
 
     for (const message of chronological) {
       if (message.type === 'hello') {
@@ -229,8 +229,8 @@ export function useLiveTelemetry(seed?: SeriesSeed, enabled = true): LiveTelemet
     // Alert counts: the stream only sends transitions, so start from the count
     // the server reported on connect and walk each event forward.
     let activeAlertCount = baseActive
-    let urgentCount = baseUrgent
-    let warningCount = baseWarning
+    let urgentCount: number | null = baseUrgent
+    let warningCount: number | null = baseWarning
     for (const alert of alerts) {
       if (activeAlertCount === null) break
       const delta = alert.action === 'created' ? 1 : -1

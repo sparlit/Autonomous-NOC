@@ -48,20 +48,18 @@ const STATE_HINT: Record<LiveState, string> = {
 }
 
 function useSecondsSince(timestamp: number | null) {
-  const [seconds, setSeconds] = useState<number | null>(null)
+  const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
-    if (timestamp === null) {
-      setSeconds(null)
-      return
-    }
-    const update = () => setSeconds(Math.max(0, Math.round((Date.now() - timestamp) / 1000)))
-    update()
-    const timer = setInterval(update, 1000)
+    if (timestamp === null) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [timestamp])
 
-  return seconds
+  // Derived at render time, so a new timestamp is reflected immediately
+  // instead of waiting for the next tick.
+  if (timestamp === null) return null
+  return Math.max(0, Math.round((now - timestamp) / 1000))
 }
 
 export interface LiveStateChipProps {
