@@ -1,0 +1,239 @@
+/*
+ * Command Execution Pane — flagship surface styling.
+ *
+ * Design language: the dashboard's existing dark zinc/emerald palette, extended
+ * with a restrained "control room" treatment (CRT scanline, neon rim light,
+ * telemetry glow). Everything here is scoped under .noc-pane so it can never
+ * leak into the rest of the app.
+ */
+
+.noc-pane {
+  --noc-ink: #05070a;
+  --noc-neon: #34d399;
+  --noc-neon-soft: rgba(52, 211, 153, 0.35);
+}
+
+/* ---------- ambient background ---------- */
+
+.noc-grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(52, 211, 153, 0.075) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(52, 211, 153, 0.075) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 25% 0%, #000 10%, transparent 78%);
+  mask-image: radial-gradient(ellipse 80% 70% at 25% 0%, #000 10%, transparent 78%);
+}
+
+/* ---------- rotating conic rim light ---------- */
+
+@property --noc-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes noc-spin {
+  to {
+    --noc-angle: 360deg;
+  }
+}
+
+.noc-rim {
+  position: relative;
+  isolation: isolate;
+}
+
+.noc-rim::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from var(--noc-angle),
+    transparent 0deg,
+    rgba(52, 211, 153, 0.85) 55deg,
+    rgba(56, 189, 248, 0.45) 110deg,
+    transparent 190deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: noc-spin 7s linear infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ---------- CRT treatment for the terminal surface ---------- */
+
+.noc-crt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  border-radius: inherit;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.032) 0px,
+    rgba(255, 255, 255, 0.032) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: 0.55;
+}
+
+@keyframes noc-sweep {
+  0% {
+    transform: translateY(-130%);
+  }
+  100% {
+    transform: translateY(430%);
+  }
+}
+
+.noc-sweep {
+  position: absolute;
+  inset-inline: 0;
+  height: 28%;
+  pointer-events: none;
+  z-index: 5;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(52, 211, 153, 0.09),
+    transparent
+  );
+  animation: noc-sweep 8s linear infinite;
+}
+
+/* ---------- pulse rings around the shield sigil ---------- */
+
+@keyframes noc-pulse-ring {
+  0% {
+    transform: scale(0.82);
+    opacity: 0.75;
+  }
+  70% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.55);
+    opacity: 0;
+  }
+}
+
+.noc-ring::before,
+.noc-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1px solid var(--noc-neon-soft);
+  animation: noc-pulse-ring 3.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.noc-ring::after {
+  animation-delay: 1.8s;
+}
+
+/* ---------- status dot ---------- */
+
+@keyframes noc-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.noc-blink {
+  animation: noc-blink 1.6s ease-in-out infinite;
+}
+
+/* ---------- neon text + panels ---------- */
+
+.noc-glow-text {
+  text-shadow: 0 0 14px rgba(52, 211, 153, 0.5);
+}
+
+.noc-glow-ring {
+  box-shadow:
+    0 0 0 1px rgba(52, 211, 153, 0.18),
+    0 0 32px -8px rgba(52, 211, 153, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.noc-glow-danger {
+  box-shadow:
+    0 0 0 1px rgba(244, 63, 94, 0.28),
+    0 0 28px -10px rgba(244, 63, 94, 0.55);
+}
+
+/* subtle vertical light shafts behind the gate */
+.noc-shafts {
+  background:
+    linear-gradient(180deg, rgba(52, 211, 153, 0.06), transparent 60%),
+    radial-gradient(ellipse 60% 50% at 50% -10%, rgba(56, 189, 248, 0.12), transparent 70%);
+}
+
+/* ---------- xterm integration ---------- */
+
+/* the emulator sets explicit pixel widths internally — never let that widen the page */
+.noc-xterm {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.noc-xterm .xterm {
+  height: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.noc-xterm .xterm-viewport {
+  background-color: transparent !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(52, 211, 153, 0.35) transparent;
+}
+
+.noc-xterm .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.noc-xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.noc-xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(52, 211, 153, 0.28);
+  border-radius: 9999px;
+}
+
+.noc-xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(52, 211, 153, 0.45);
+}
+
+/* the helper textarea must stay focusable but invisible */
+.noc-xterm .xterm-helper-textarea {
+  caret-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .noc-rim::before,
+  .noc-sweep,
+  .noc-ring::before,
+  .noc-ring::after,
+  .noc-blink {
+    animation: none !important;
+  }
+}

@@ -1,4 +1,7 @@
+"use client"
+
 import * as React from "react"
+import { usePathname } from "next/navigation"
 import {
   LayoutDashboard,
   Activity,
@@ -31,7 +34,6 @@ const data = {
       title: "Dashboard",
       url: "/",
       icon: LayoutDashboard,
-      isActive: true,
     },
     {
       title: "Monitoring",
@@ -122,6 +124,9 @@ const data = {
  * @returns The rendered sidebar React element.
  */
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const pathname = usePathname()
+  const isCurrent = (url: string) => url !== "#" && url === pathname
+
   return (
     <Sidebar variant="inset" {...props}>
       <SidebarHeader>
@@ -145,17 +150,25 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <SidebarMenu>
             {data.navMain.map((item) => (
               <SidebarMenuItem key={item.title}>
-                <SidebarMenuButton asChild tooltip={item.title} isActive={item.isActive}>
+                <SidebarMenuButton asChild tooltip={item.title} isActive={isCurrent(item.url)}>
                   <a href={item.url}>
                     {item.icon && <item.icon />}
                     <span>{item.title}</span>
+                    {item.title === "Terminal" ? (
+                      <span className="ml-auto shrink-0 rounded border border-emerald-500/30 bg-emerald-500/10 px-1 font-mono text-[9px] leading-4 uppercase tracking-wider text-emerald-400">
+                        admin
+                      </span>
+                    ) : null}
                   </a>
                 </SidebarMenuButton>
                 {item.items?.length ? (
                   <SidebarMenuSub>
                     {item.items.map((subItem) => (
                       <SidebarMenuSubItem key={subItem.title}>
-                        <SidebarMenuSubButton href={subItem.url}>
+                        <SidebarMenuSubButton
+                          href={subItem.url}
+                          isActive={isCurrent(subItem.url)}
+                        >
                           {subItem.title}
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
