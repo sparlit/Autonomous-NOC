@@ -44,6 +44,10 @@ from app.core.automation_store import AutomationStore
 from nanoc.core.event_bus import EventBus
 from nanoc.memory.memory import Memory
 
+#: Admin secret configured by the API fixture below. Manual runs and the
+#: remediation queue are ADMIN surfaces after the RBAC pass.
+ADMIN_TOKEN = "test-admin-token"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -927,15 +931,24 @@ class TestEventBusIntegration:
 # ---------------------------------------------------------------------------
 @pytest.fixture()
 def api_client(tmp_path, monkeypatch):
-    """TestClient with the automation singleton pointed at a throwaway store."""
+    """TestClient with the automation singleton pointed at a throwaway store.
+
+    Manual rule execution and the remediation queue are ``ADMIN`` surfaces since
+    the RBAC pass, so the fixture configures an admin token and sends it on every
+    request. The denial paths are covered in ``test_auth_rbac.py``.
+    """
     from fastapi.testclient import TestClient
 
+    from app.core.config import settings as app_settings
     from main import app
 
+    monkeypatch.setattr(app_settings, "NOC_ADMIN_TOKEN", ADMIN_TOKEN, raising=False)
     store = AutomationStore(str(tmp_path / "api.db"))
     monkeypatch.setattr(automation_api.automation_engine, "_store", store)
     monkeypatch.setattr(automation_api.automation_engine, "_rules", [make_rule()])
-    return TestClient(app), store
+    client = TestClient(app)
+    client.headers.update({"Authorization": f"Bearer {ADMIN_TOKEN}"})
+    return client, store
 
 
 class TestApi:

@@ -417,27 +417,55 @@ class TestOnPtyReadCallback:
 # terminal_websocket FastAPI route
 # ---------------------------------------------------------------------------
 
+#: Token used by the route-level tests. Configured on the *settings objects* the
+#: auth module reads, never hard-coded in the application.
+TEST_ADMIN_TOKEN = "test-admin-token"
+
+
+@pytest.fixture
+def admin_token(monkeypatch):
+    """Configure an admin token for the duration of one test."""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "NOC_ADMIN_TOKEN", TEST_ADMIN_TOKEN, raising=False)
+    return TEST_ADMIN_TOKEN
+
+
+@pytest.fixture
+def operator_only_token(monkeypatch):
+    """Configure an operator token but no admin token (privileged = disabled)."""
+    from app.core.config import settings as app_settings
+    from nanoc.core.config import settings as nanoc_settings
+
+    monkeypatch.setattr(app_settings, "NOC_ADMIN_TOKEN", "", raising=False)
+    monkeypatch.setattr(app_settings, "NOC_OPERATOR_TOKEN", "test-operator-token", raising=False)
+    monkeypatch.setattr(nanoc_settings, "TERMINAL_ACCESS_TOKEN", "", raising=False)
+    return "test-operator-token"
+
+
 class TestTerminalWebsocketRoute:
     def test_websocket_route_registered(self):
         """The /api/terminal/ws route must exist on the app."""
         routes = route_paths(app)
         assert "/api/terminal/ws" in routes
 
-    def test_websocket_connect_accepted_and_session_started(self):
+    def test_websocket_connect_accepted_and_session_started(self, admin_token):
         """
-        Connecting to /api/terminal/ws should result in websocket.accept()
-        being called; we patch TerminalSession.start to avoid real PTY work.
+        A correctly tokened client is accepted and the session starts; we patch
+        TerminalSession.start to avoid real PTY work.
         """
         with patch(
             "app.api.endpoints.terminal.TerminalSession.start",
             new_callable=AsyncMock,
-        ):
+        ) as mock_start:
             client = TestClient(app)
-            with client.websocket_connect("/api/terminal/ws") as ws:
-                # Connection was accepted; close cleanly from client side
+            with client.websocket_connect(
+                f"/api/terminal/ws?token={admin_token}"
+            ) as ws:
                 ws.close()
+            assert mock_start.await_count == 1
 
-    def test_websocket_exception_closes_connection(self):
+    def test_websocket_exception_closes_connection(self, admin_token):
         """
         If TerminalSession.start raises, the WebSocket should be closed
         gracefully rather than leaking the connection.
@@ -448,183 +476,219 @@ class TestTerminalWebsocketRoute:
             side_effect=RuntimeError("fork failed"),
         ):
             client = TestClient(app)
-            # The server closes the WS after the error; TestClient should
-            # handle this without raising an unhandled exception.
             try:
-                with client.websocket_connect("/api/terminal/ws") as ws:
+                with client.websocket_connect(
+                    f"/api/terminal/ws?token={admin_token}"
+                ) as ws:
                     ws.close()
             except Exception:
                 pass  # Connection closed by server is acceptable here
 
+    def test_unauthenticated_client_is_rejected_before_accept(self, admin_token):
+        """
+        No token: the handshake must fail. Because authorization happens before
+        ``accept()``, the client never gets a connected socket.
+        """
+        with patch(
+            "app.api.endpoints.terminal.TerminalSession.start",
+            new_callable=AsyncMock,
+        ) as mock_start:
+            client = TestClient(app)
+            with pytest.raises(WebSocketDisconnect):
+                with client.websocket_connect("/api/terminal/ws"):
+                    pass
+            # No PTY work happened for a rejected peer.
+            mock_start.assert_not_awaited()
 
-# ---------------------------------------------------------------------------
-# get_token_auth – PR addition: token-based authentication
-# ---------------------------------------------------------------------------
+    def test_wrong_token_is_rejected(self, admin_token):
+        """A wrong token is refused during the handshake."""
+        client = TestClient(app)
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/api/terminal/ws?token=definitely-wrong"):
+                pass
 
-class TestGetTokenAuth:
-    """Tests for the new get_token_auth dependency introduced in this PR."""
+    def test_operator_token_cannot_open_a_terminal(self, monkeypatch):
+        """OPERATOR is a read-only role: it must not reach the privileged shell."""
+        from app.core.config import settings as app_settings
 
-    @pytest.mark.asyncio
-    async def test_valid_token_returns_token(self):
-        """When the query param token matches the configured secret, the token is returned."""
-        from app.api.endpoints.terminal import get_token_auth
-        ws = MagicMock()
-        ws.query_params = {"token": "secret-foss-token"}
-        ws.close = AsyncMock()
+        monkeypatch.setattr(app_settings, "NOC_ADMIN_TOKEN", TEST_ADMIN_TOKEN, raising=False)
+        monkeypatch.setattr(app_settings, "NOC_OPERATOR_TOKEN", "test-operator-token", raising=False)
 
-        with patch("app.api.endpoints.terminal.settings") as mock_settings:
-            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
-            result = await get_token_auth(ws)
+        client = TestClient(app)
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/api/terminal/ws?token=test-operator-token"):
+                pass
 
-        assert result == "secret-foss-token"
-        ws.close.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_invalid_token_closes_websocket_with_1008(self):
-        """When token does not match, websocket is closed with code 1008."""
-        from app.api.endpoints.terminal import get_token_auth
-        ws = MagicMock()
-        ws.query_params = {"token": "wrong-token"}
-        ws.close = AsyncMock()
-
-        with patch("app.api.endpoints.terminal.settings") as mock_settings:
-            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
-            result = await get_token_auth(ws)
-
-        assert result is None
-        ws.close.assert_awaited_once_with(code=1008)
-
-    @pytest.mark.asyncio
-    async def test_missing_token_closes_websocket_with_1008(self):
-        """When no token query param is provided, websocket is closed with code 1008."""
-        from app.api.endpoints.terminal import get_token_auth
-        ws = MagicMock()
-        ws.query_params = {}
-        ws.close = AsyncMock()
-
-        with patch("app.api.endpoints.terminal.settings") as mock_settings:
-            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
-            result = await get_token_auth(ws)
-
-        assert result is None
-        ws.close.assert_awaited_once_with(code=1008)
-
-    @pytest.mark.asyncio
-    async def test_empty_string_token_is_rejected(self):
-        """An empty string token does not match and is rejected."""
-        from app.api.endpoints.terminal import get_token_auth
-        ws = MagicMock()
-        ws.query_params = {"token": ""}
-        ws.close = AsyncMock()
-
-        with patch("app.api.endpoints.terminal.settings") as mock_settings:
-            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
-            result = await get_token_auth(ws)
-
-        assert result is None
-        ws.close.assert_awaited_once_with(code=1008)
-
-    @pytest.mark.asyncio
-    async def test_token_check_is_case_sensitive(self):
-        """Token comparison is case-sensitive; wrong case is rejected."""
-        from app.api.endpoints.terminal import get_token_auth
-        ws = MagicMock()
-        ws.query_params = {"token": "SECRET-FOSS-TOKEN"}
-        ws.close = AsyncMock()
-
-        with patch("app.api.endpoints.terminal.settings") as mock_settings:
-            mock_settings.TERMINAL_ACCESS_TOKEN = "secret-foss-token"
-            result = await get_token_auth(ws)
-
-        assert result is None
-        ws.close.assert_awaited_once_with(code=1008)
+    def test_bearer_header_also_authorizes(self, admin_token):
+        """``Authorization: Bearer`` is accepted in place of ``?token=``."""
+        with patch(
+            "app.api.endpoints.terminal.TerminalSession.start",
+            new_callable=AsyncMock,
+        ) as mock_start:
+            client = TestClient(app)
+            with client.websocket_connect(
+                "/api/terminal/ws",
+                headers={"Authorization": f"Bearer {admin_token}"},
+            ) as ws:
+                ws.close()
+            assert mock_start.await_count == 1
 
 
 # ---------------------------------------------------------------------------
-# terminal_websocket – auth integration with the route
+# TerminalSession frame handling (hardening: one bad frame must not kill the
+# session)
 # ---------------------------------------------------------------------------
 
-class TestTerminalWebsocketAuth:
-    """Tests that terminal_websocket correctly enforces token auth before starting session."""
+class TestTerminalFrameHardening:
+    @pytest.mark.asyncio
+    async def test_garbage_text_frame_is_ignored(self):
+        """Non-JSON text must not raise and must not write to the PTY."""
+        session = TerminalSession(_make_mock_websocket())
+        session.fd = 10
+        with patch("os.write") as mock_write:
+            await session.handle_text_frame("this is not json")
+            mock_write.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_valid_token_starts_terminal_session(self):
-        """With a valid token, TerminalSession.start is called."""
-        from app.api.endpoints.terminal import terminal_websocket
-        ws = MagicMock()
-        ws.accept = AsyncMock()
-        ws.close = AsyncMock()
-        ws.query_params = {"token": "good-token"}
-
-        with patch("app.api.endpoints.terminal.settings") as mock_settings, \
-             patch("app.api.endpoints.terminal.TerminalSession") as MockSession:
-            mock_settings.TERMINAL_ACCESS_TOKEN = "good-token"
-            mock_instance = MagicMock()
-            mock_instance.start = AsyncMock()
-            MockSession.return_value = mock_instance
-
-            await terminal_websocket(ws)
-
-        ws.accept.assert_awaited_once()
-        mock_instance.start.assert_awaited_once()
+    async def test_non_object_json_frame_is_ignored(self):
+        """A JSON array/scalar is not a control frame."""
+        session = TerminalSession(_make_mock_websocket())
+        session.fd = 10
+        with patch("os.write") as mock_write:
+            await session.handle_text_frame("[1, 2, 3]")
+            await session.handle_text_frame("42")
+            mock_write.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_invalid_token_does_not_start_session(self):
-        """With an invalid token, TerminalSession.start is NOT called."""
-        from app.api.endpoints.terminal import terminal_websocket
-        ws = MagicMock()
-        ws.accept = AsyncMock()
-        ws.close = AsyncMock()
-        ws.query_params = {"token": "bad-token"}
-
-        with patch("app.api.endpoints.terminal.settings") as mock_settings, \
-             patch("app.api.endpoints.terminal.TerminalSession") as MockSession:
-            mock_settings.TERMINAL_ACCESS_TOKEN = "correct-token"
-            mock_instance = MagicMock()
-            mock_instance.start = AsyncMock()
-            MockSession.return_value = mock_instance
-
-            await terminal_websocket(ws)
-
-        MockSession.assert_not_called()
-        mock_instance.start.assert_not_called()
+    async def test_resize_without_rows_uses_defaults(self):
+        """A resize frame missing ``rows`` must not raise (regression)."""
+        session = TerminalSession(_make_mock_websocket())
+        session.fd = 10
+        with patch("fcntl.ioctl") as mock_ioctl:
+            await session.handle_text_frame(json.dumps({"type": "resize", "cols": 120}))
+            mock_ioctl.assert_called_once()
+            packed = mock_ioctl.call_args[0][2]
+            rows, cols, _, _ = struct.unpack("HHHH", packed)
+            assert rows == 24
+            assert cols == 120
 
     @pytest.mark.asyncio
-    async def test_websocket_is_always_accepted_before_auth(self):
-        """The WebSocket is accepted before auth check (to allow clean rejection)."""
-        from app.api.endpoints.terminal import terminal_websocket
-        ws = MagicMock()
-        ws.accept = AsyncMock()
-        ws.close = AsyncMock()
-        ws.query_params = {"token": "wrong"}
-        call_order = []
-        ws.accept.side_effect = lambda: call_order.append("accept")
-        ws.close.side_effect = lambda code=None: call_order.append("close")
-
-        with patch("app.api.endpoints.terminal.settings") as mock_settings:
-            mock_settings.TERMINAL_ACCESS_TOKEN = "secret"
-            with patch("app.api.endpoints.terminal.TerminalSession"):
-                await terminal_websocket(ws)
-
-        assert "accept" in call_order
-        assert call_order.index("accept") < call_order.index("close")
+    async def test_resize_without_cols_uses_defaults(self):
+        """The mirror case: only ``rows`` present."""
+        session = TerminalSession(_make_mock_websocket())
+        session.fd = 10
+        with patch("fcntl.ioctl") as mock_ioctl:
+            await session.handle_text_frame(json.dumps({"type": "resize", "rows": 40}))
+            packed = mock_ioctl.call_args[0][2]
+            rows, cols, _, _ = struct.unpack("HHHH", packed)
+            assert rows == 40
+            assert cols == 80
 
     @pytest.mark.asyncio
-    async def test_session_start_exception_closes_websocket(self):
-        """When TerminalSession.start raises, the websocket is closed."""
-        from app.api.endpoints.terminal import terminal_websocket
-        ws = MagicMock()
-        ws.accept = AsyncMock()
-        ws.close = AsyncMock()
-        ws.query_params = {"token": "valid"}
+    async def test_resize_with_garbage_dimensions_uses_defaults(self):
+        """Non-numeric or negative dimensions fall back instead of raising."""
+        session = TerminalSession(_make_mock_websocket())
+        session.fd = 10
+        with patch("fcntl.ioctl") as mock_ioctl:
+            await session.handle_text_frame(
+                json.dumps({"type": "resize", "rows": "wide", "cols": -5})
+            )
+            rows, cols, _, _ = struct.unpack("HHHH", mock_ioctl.call_args[0][2])
+            assert (rows, cols) == (24, 80)
 
-        with patch("app.api.endpoints.terminal.settings") as mock_settings, \
-             patch("app.api.endpoints.terminal.TerminalSession") as MockSession:
-            mock_settings.TERMINAL_ACCESS_TOKEN = "valid"
-            mock_instance = MagicMock()
-            mock_instance.start = AsyncMock(side_effect=RuntimeError("fork failed"))
-            MockSession.return_value = mock_instance
+    @pytest.mark.asyncio
+    async def test_resize_without_any_keys_does_not_raise(self):
+        """``{"type": "resize"}`` is a no-op, not a TypeError."""
+        session = TerminalSession(_make_mock_websocket())
+        session.fd = 10
+        with patch("fcntl.ioctl"):
+            await session.handle_text_frame(json.dumps({"type": "resize"}))
 
-            await terminal_websocket(ws)
+    @pytest.mark.asyncio
+    async def test_input_without_string_data_is_ignored(self):
+        """``data`` must be a string; anything else is dropped, not written."""
+        session = TerminalSession(_make_mock_websocket())
+        session.fd = 10
+        with patch("os.write") as mock_write:
+            await session.handle_text_frame(json.dumps({"type": "input", "data": 123}))
+            mock_write.assert_not_called()
 
-        ws.close.assert_awaited()
+    @pytest.mark.asyncio
+    async def test_unknown_frame_type_is_ignored(self):
+        """Unknown control frames are dropped silently."""
+        session = TerminalSession(_make_mock_websocket())
+        session.fd = 10
+        with patch("os.write") as mock_write:
+            await session.handle_text_frame(json.dumps({"type": "teleport"}))
+            mock_write.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_session_survives_a_bad_frame_then_handles_a_good_one(self):
+        """
+        The regression that mattered: one garbage frame used to tear down the
+        whole session. Now the loop skips it and the *next* frame still works.
+        """
+        ws = _make_mock_websocket()
+        ws.receive = AsyncMock(side_effect=[
+            {"text": "}{ not json"},
+            {"text": json.dumps({"type": "resize"})},          # malformed resize
+            {"text": json.dumps({"type": "input", "data": "id\n"})},
+            WebSocketDisconnect(),
+        ])
+        session = TerminalSession(ws)
+        session.fd = 10
+
+        mock_loop = MagicMock()
+        with patch("asyncio.get_event_loop", return_value=mock_loop), \
+             patch("os.write") as mock_write, \
+             patch("fcntl.ioctl"), \
+             patch("os.close"), \
+             patch("os.kill"), \
+             patch("os.waitpid"):
+            await session.run()
+
+        # The good frame still reached the PTY.
+        mock_write.assert_called_once_with(10, b"id\n")
+
+    @pytest.mark.asyncio
+    async def test_pty_write_error_does_not_raise(self):
+        """A dead PTY (EIO) is swallowed rather than killing the loop."""
+        session = TerminalSession(_make_mock_websocket())
+        session.fd = 10
+        with patch("os.write", side_effect=OSError(5, "Input/output error")):
+            session._write(b"ls\n")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Role checks used by the terminal surface
+# ---------------------------------------------------------------------------
+
+class TestTerminalAuthorization:
+    """The terminal is an ADMIN surface; the auth module owns the policy."""
+
+    def test_admin_token_grants_admin(self, admin_token):
+        from app.core.auth import Role, resolve_role
+
+        assert resolve_role(admin_token) is Role.ADMIN
+
+    def test_operator_token_grants_operator_only(self, monkeypatch):
+        from app.core.auth import Role, resolve_role
+        from app.core.config import settings as app_settings
+
+        monkeypatch.setattr(app_settings, "NOC_ADMIN_TOKEN", "", raising=False)
+        monkeypatch.setattr(app_settings, "NOC_OPERATOR_TOKEN", "op-token", raising=False)
+        monkeypatch.setattr(
+            "nanoc.core.config.settings.TERMINAL_ACCESS_TOKEN", "", raising=False
+        )
+        assert resolve_role("op-token") is Role.OPERATOR
+
+    def test_empty_token_is_anonymous_even_when_nothing_is_configured(self, monkeypatch):
+        """An unconfigured token never matches an empty presented token."""
+        from app.core.auth import Role, resolve_role
+        from app.core.config import settings as app_settings
+        from nanoc.core.config import settings as nanoc_settings
+
+        monkeypatch.setattr(app_settings, "NOC_ADMIN_TOKEN", "", raising=False)
+        monkeypatch.setattr(nanoc_settings, "TERMINAL_ACCESS_TOKEN", "", raising=False)
+        assert resolve_role("") is Role.ANONYMOUS
+        assert resolve_role(None) is Role.ANONYMOUS

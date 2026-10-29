@@ -1,12 +1,15 @@
 """
-Tests for backend/app/api/endpoints/monitoring.py (as modified in this PR).
+Tests for backend/app/api/endpoints/monitoring.py.
 
-The PR simplified monitoring.py to:
-  - GET /status  → static mock dict (no DB/Prometheus dependency)
-  - GET /metrics → proxy to Prometheus; raises HTTPException(500) on failure
+Updated in the hardening PR: ``/status`` no longer returns hard-coded mock
+numbers. Every field is either a real measurement or the explicit string
+``"unknown"`` (with a ``sources`` map naming the subsystem behind each value),
+so the assertions below check *shape and provenance* rather than pinned
+constants that used to be fiction.
 """
 
 import os
+import re
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,6 +22,15 @@ from fastapi.testclient import TestClient
 from main import app
 
 client = TestClient(app)
+
+#: A real latency reading ("12.5ms") or the explicit unavailable marker.
+LATENCY_RE = re.compile(r"^(-?\d+(\.\d+)?ms|unknown)$")
+#: A real availability percentage ("99.99%") or the explicit unavailable marker.
+UPTIME_RE = re.compile(r"^(\d+(\.\d+)?%|unknown)$")
+#: A real host throughput rate ("1.25 Gbps", "3.4 Mbps") or unavailable.
+TRAFFIC_RE = re.compile(r"^(\d+(\.\d+)? (Mbps|Gbps)|unknown)$")
+#: Status is derived from the live alert rules.
+STATUS_VALUES = {"nominal", "degraded", "critical"}
 
 
 # ---------------------------------------------------------------------------
@@ -36,19 +48,32 @@ class TestMonitoringStatus:
 
     def test_latency_field_present_and_correct(self):
         response = client.get("/api/monitoring/status")
-        assert response.json()["latency"] == "12ms"
+        assert LATENCY_RE.match(response.json()["latency"])
 
     def test_uptime_field_present_and_correct(self):
         response = client.get("/api/monitoring/status")
-        assert response.json()["uptime"] == "99.99%"
+        assert UPTIME_RE.match(response.json()["uptime"])
 
     def test_traffic_field_present_and_correct(self):
         response = client.get("/api/monitoring/status")
-        assert response.json()["traffic"] == "1.2 Gbps"
+        assert TRAFFIC_RE.match(response.json()["traffic"])
 
     def test_status_field_present_and_correct(self):
         response = client.get("/api/monitoring/status")
-        assert response.json()["status"] == "nominal"
+        assert response.json()["status"] in STATUS_VALUES
+
+    def test_no_fabricated_fallbacks_remain(self):
+        """The old mock values must never be presented as live data."""
+        body = client.get("/api/monitoring/status").json()
+        assert body["uptime"] != "99.99%"
+        assert body["traffic"] != "1.2 Gbps"
+
+    def test_sources_describe_provenance(self):
+        """Every field names the subsystem that produced it."""
+        sources = client.get("/api/monitoring/status").json()["sources"]
+        assert set(sources) == {"latency", "uptime", "traffic", "status", "backlog"}
+        assert sources["traffic"] == "host_sampler"
+        assert sources["status"] == "alert_rules"
 
     def test_response_has_expected_keys(self):
         response = client.get("/api/monitoring/status")
@@ -59,11 +84,18 @@ class TestMonitoringStatus:
         response = client.get("/api/monitoring/status")
         assert "backlog" in response.json()
 
-    def test_status_is_idempotent(self):
-        """Calling the endpoint twice returns the same value."""
-        r1 = client.get("/api/monitoring/status")
-        r2 = client.get("/api/monitoring/status")
-        assert r1.json() == r2.json()
+    def test_status_is_structurally_stable(self):
+        """
+        Two calls return the same fields with the same types.
+
+        Byte equality is deliberately not asserted any more: latency, uptime and
+        traffic are live measurements, so they legitimately move between calls.
+        """
+        r1 = client.get("/api/monitoring/status").json()
+        r2 = client.get("/api/monitoring/status").json()
+        assert set(r1) == set(r2)
+        for key in r1:
+            assert type(r1[key]) is type(r2[key]), key
 
 
 # ---------------------------------------------------------------------------
