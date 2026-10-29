@@ -1504,10 +1504,10 @@ class TestSettingsNewFields:
         assert s.MAX_WORKERS == 20
 
     def test_terminal_access_token_default(self):
-        """Settings.TERMINAL_ACCESS_TOKEN has a non-empty default value."""
+        """TERMINAL_ACCESS_TOKEN defaults to empty - fail closed, no hard-coded token."""
         from nanoc.core.config import Settings
         s = Settings()
-        assert s.TERMINAL_ACCESS_TOKEN == "secret-foss-token"
+        assert s.TERMINAL_ACCESS_TOKEN == ""
 
     def test_initial_workers_env_override(self, monkeypatch):
         """INITIAL_WORKERS can be overridden via environment variable."""
@@ -1554,9 +1554,9 @@ class TestConfigNewSettings:
         assert settings.MAX_WORKERS == 20
 
     def test_terminal_access_token_default(self):
-        """TERMINAL_ACCESS_TOKEN must default to 'secret-foss-token'."""
+        """TERMINAL_ACCESS_TOKEN must default to empty - fail closed."""
         from nanoc.core.config import settings
-        assert settings.TERMINAL_ACCESS_TOKEN == "secret-foss-token"
+        assert settings.TERMINAL_ACCESS_TOKEN == ""
 
     def test_max_workers_greater_than_initial_workers(self):
         """MAX_WORKERS must be greater than INITIAL_WORKERS by default."""
