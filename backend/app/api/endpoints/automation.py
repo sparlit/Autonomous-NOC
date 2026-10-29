@@ -8,18 +8,30 @@ routes plus a status tile:
 ``POST /api/automation/rules/{id}/run``   run a rule now (manual trigger)
 ``GET  /api/automation/pending``          the remediation queue (nothing runs it yet)
 ``GET  /api/automation/status``           engine health for the dashboard
+
+Authorization (see :mod:`app.core.auth`)
+----------------------------------------
+* Reading rules, run history and engine status is ``OPERATOR``.
+* **Executing** a rule (:func:`run_rule`) and reading the remediation queue
+  (:func:`list_pending_actions`) are ``ADMIN``: a manual trigger can run
+  remediation commands, and the queue lists the commands themselves. Both are
+  denied outright until ``NOC_ADMIN_TOKEN`` is configured.
 """
 
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
+from app.core.auth import Role, require_role
 from app.core.automation import engine as automation_engine
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_role(Role.OPERATOR))])
+
+#: Privileged dependency for the surfaces that can change the control node.
+require_admin = require_role(Role.ADMIN)
 
 #: Page-size guard rails: the dashboard asks for 25-50, exports maybe 200.
 MAX_PAGE_SIZE = 200
@@ -90,7 +102,10 @@ async def list_runs(
     }
 
 
-@router.post("/rules/{rule_id}/run")
+@router.post(
+    "/rules/{rule_id}/run",
+    dependencies=[Depends(require_admin)],
+)
 async def run_rule(
     rule_id: str, payload: Optional[Dict[str, Any]] = Body(default=None)
 ) -> Dict[str, Any]:
@@ -117,7 +132,10 @@ async def run_rule(
     return {"rule_id": rule_id, "trigger": "manual", "runs": runs}
 
 
-@router.get("/pending")
+@router.get(
+    "/pending",
+    dependencies=[Depends(require_admin)],
+)
 async def list_pending_actions(
     limit: int = Query(50, ge=1, le=MAX_PAGE_SIZE),
     offset: int = Query(0, ge=0),

@@ -30,7 +30,9 @@ class TestHealthEndpoint:
 
     def test_response_body(self):
         response = client.get("/health")
-        assert response.json() == {"status": "ok"}
+        body = response.json()
+        assert body["status"] == "ok"  # RBAC mode is reported alongside it
+        assert "auth" in body
 
     def test_content_type_is_json(self):
         response = client.get("/health")

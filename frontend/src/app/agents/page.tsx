@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Brain, Terminal as TerminalIcon, Cpu } from "lucide-react";
+import { authHeaders, withToken } from "@/hooks/use-live-data";
 
 interface Agent {
   id: string;
@@ -36,12 +37,13 @@ export default function AgentOperations() {
 
   useEffect(() => {
     const fetchAgents = async () => {
-        const res = await fetch(`${API_URL}/api/data/agents`);
+        const res = await fetch(`${API_URL}/api/data/agents`, { headers: authHeaders() });
         if (res.ok) setAgents(await res.json());
     };
     fetchAgents();
 
-    const socket = new WebSocket(`${API_URL.replace('http', 'ws')}/ws`);
+    // `/ws` is authorized before accept: pass the elevated token when present.
+    const socket = new WebSocket(withToken(`${API_URL.replace('http', 'ws')}/ws`));
 
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);

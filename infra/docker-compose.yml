@@ -49,6 +49,16 @@ services:
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
       - KEEP_URL=http://keep:8080
+      # --- RBAC (see docs/SECURITY.md) ---
+      # ADMIN unlocks the terminal WebSocket, manual rule runs and the
+      # remediation queue. EMPTY = those surfaces are DISABLED (fail closed), so
+      # set it in the .env file next to this compose file before you expect the
+      # command pane to work:
+      #   NOC_ADMIN_TOKEN=$(openssl rand -hex 32)
+      - NOC_ADMIN_TOKEN=${NOC_ADMIN_TOKEN:-}
+      # OPERATOR unlocks read-only monitoring/data/alerts and the /ws stream.
+      # EMPTY = reads are open (fine for localhost, not for anything routable).
+      - NOC_OPERATOR_TOKEN=${NOC_OPERATOR_TOKEN:-}
       # --- automation engine (see docs/AUTOMATION.md) ---
       # Rules ship with the image at /app/config/automation_rules.json.
       - AUTOMATION_ENABLED=${AUTOMATION_ENABLED:-true}

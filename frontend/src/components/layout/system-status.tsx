@@ -2,10 +2,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 
-import { useLiveFeed, API_URL } from "@/hooks/use-live-data";
+import { useLiveFeed, API_URL, authHeaders } from "@/hooks/use-live-data";
 
 const fetchStatus = async () => {
-  const res = await fetch(`${API_URL}/api/monitoring/status`);
+  const res = await fetch(`${API_URL}/api/monitoring/status`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Failed to fetch status");
   return res.json();
 };

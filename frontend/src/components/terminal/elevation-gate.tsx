@@ -203,8 +203,9 @@ export function ElevationGate({ onElevate, initialToken = '', notice }: Elevatio
                   </button>
                 </div>
                 <p className="text-[11px] leading-relaxed text-zinc-600">
-                  Issued from <span className="font-mono text-zinc-500">TERMINAL_ACCESS_TOKEN</span> on
-                  the control plane. Nothing is sent until you elevate.
+                  Issued from <span className="font-mono text-zinc-500">NOC_ADMIN_TOKEN</span> on
+                  the control plane (the legacy <span className="font-mono text-zinc-500">TERMINAL_ACCESS_TOKEN</span>{' '}
+                  alias still works). Nothing is sent until you elevate.
                 </p>
               </div>
 

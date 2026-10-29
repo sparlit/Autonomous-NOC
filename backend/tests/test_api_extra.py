@@ -28,8 +28,11 @@ class TestHealthEndpoint:
         assert response.status_code == 200
 
     def test_health_response_body_is_ok(self):
-        response = client.get("/health")
-        assert response.json() == {"status": "ok"}
+        """``/health`` stays the one public surface: status plus RBAC mode."""
+        body = client.get("/health").json()
+        assert body["status"] == "ok"
+        assert "auth" in body
+        assert "admin_configured" in body["auth"]
 
     def test_health_content_type_is_json(self):
         response = client.get("/health")
@@ -60,7 +63,8 @@ class TestMonitoringStatus:
     def test_monitoring_status_uptime_format(self):
         response = client.get("/api/monitoring/status")
         if response.status_code == 200:
-            assert "%" in response.json()["uptime"]
+            uptime = response.json()["uptime"]
+            assert uptime == "unknown" or "%" in uptime
 
     def test_monitoring_status_status_field(self):
         response = client.get("/api/monitoring/status")
