@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "description": "Declarative automation rules for the Autonomous NOC. Rules react to EventBus topics and run actions. No rule executes shell commands: 'command' actions are queued for a later, security-reviewed executor.",
+  "rules": [
+    {
+      "id": "critical-alert-webhook",
+      "name": "Critical alert \u2192 notify + webhook",
+      "description": "Any newly created critical alert is recorded locally and pushed to the on-call webhook.",
+      "enabled": true,
+      "trigger": {
+        "topic": "alert/created",
+        "conditions": [
+          {"field": "severity", "op": "eq", "value": "critical"}
+        ]
+      },
+      "actions": [
+        {
+          "type": "notify",
+          "message": "CRITICAL {rule}: {title} \u2014 {description}"
+        },
+        {
+          "type": "webhook",
+          "url": "${AUTOMATION_WEBHOOK_URL}",
+          "timeout_s": 5,
+          "retries": 2
+        }
+      ]
+    },
+    {
+      "id": "latency-sustained-remediation",
+      "name": "Sustained latency breach \u2192 notify + remediation",
+      "description": "Latency above 500ms for three consecutive snapshots (~6s) queues a remediation command instead of executing it.",
+      "enabled": true,
+      "trigger": {
+        "topic": "metric/snapshot",
+        "conditions": [
+          {"field": "latency_ms", "op": "gt", "value": 500}
+        ],
+        "sustain": {"count": 3},
+        "cooldown_seconds": 300
+      },
+      "actions": [
+        {
+          "type": "notify",
+          "message": "Latency {latency_ms}ms sustained above 500ms (backlog {backlog})"
+        },
+        {
+          "type": "command",
+          "command": "noc-remediate latency --threshold-ms 500 --window 3",
+          "reason": "Sustained latency SLO breach",
+          "severity": "critical"
+        }
+      ]
+    },
+    {
+      "id": "prometheus-blind-escalate",
+      "name": "Prometheus unreachable \u2192 notify + webhook",
+      "description": "The NOC is flying blind when Prometheus cannot be reached; escalate the alert off-host.",
+      "enabled": true,
+      "trigger": {
+        "topic": "alert/created",
+        "conditions": [
+          {"field": "rule", "op": "eq", "value": "prometheus_unreachable"}
+        ]
+      },
+      "actions": [
+        {
+          "type": "notify",
+          "message": "Metrics pipeline degraded: {title}"
+        },
+        {
+          "type": "webhook",
+          "url": "${AUTOMATION_WEBHOOK_URL}"
+        }
+      ]
+    },
+    {
+      "id": "alert-resolved-notify",
+      "name": "Alert resolved \u2192 notify",
+      "description": "Records every alert recovery in the automation run history so the dashboard can show the full lifecycle.",
+      "enabled": true,
+      "trigger": {
+        "topic": "alert/resolved",
+        "conditions": []
+      },
+      "actions": [
+        {
+          "type": "notify",
+          "message": "RESOLVED {rule}: {title}"
+        }
+      ]
+    }
+  ]
+}

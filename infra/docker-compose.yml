@@ -49,6 +49,14 @@ services:
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
       - KEEP_URL=http://keep:8080
+      # --- automation engine (see docs/AUTOMATION.md) ---
+      # Rules ship with the image at /app/config/automation_rules.json.
+      - AUTOMATION_ENABLED=${AUTOMATION_ENABLED:-true}
+      # Leave empty to keep webhook actions in the safe "skipped" state; set it
+      # in a .env file next to this compose file to enable off-host escalation.
+      - AUTOMATION_WEBHOOK_URL=${AUTOMATION_WEBHOOK_URL:-}
+      - AUTOMATION_WEBHOOK_SECRET=${AUTOMATION_WEBHOOK_SECRET:-}
+      - AUTOMATION_MAX_CONCURRENCY=${AUTOMATION_MAX_CONCURRENCY:-4}
     depends_on:
       - prometheus
     restart: unless-stopped

@@ -44,6 +44,7 @@ TOPIC_TYPE_PREFIXES: tuple[tuple[str, str], ...] = (
     ("topology/", "data_update"),
     ("data/", "data_update"),
     ("agent/", "agent"),
+    ("automation/", "automation"),
     ("system/", "event"),
 )
 

@@ -8,7 +8,8 @@ from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.endpoints import alerts, data, monitoring, terminal, websockets
+from app.api.endpoints import alerts, automation, data, monitoring, terminal, websockets
+from app.core.automation import engine as automation_engine
 from app.core.config import settings
 from app.core.streaming import StreamEngine, engine
 from nanoc.core.config import settings as nanoc_settings
@@ -68,6 +69,19 @@ async def lifespan(app: FastAPI):
     engine.bind(bus)
     polling_task = asyncio.create_task(bus.start_polling())
     stream_task = asyncio.create_task(engine.run())
+
+    # The automation engine listens on the same bus: rules are matched on the
+    # polling loop (non-blocking), actions run on a bounded worker pool, and
+    # every run is republished as ``automation/run`` for the /ws fan-out.
+    automation_engine.bind_bus(bus)
+    automation_topics = automation_engine.subscribe(bus)
+    await automation_engine.start()
+    logger.info(
+        "Automation engine active: %d rule(s) on %s",
+        len(automation_engine.rules),
+        ", ".join(automation_topics) or "no topics",
+    )
+
     logger.info(
         "NOC live streaming active: %s websocket clients at startup",
         websockets.manager.connection_count,
@@ -76,6 +90,7 @@ async def lifespan(app: FastAPI):
     yield
 
     engine.stop()
+    await automation_engine.stop()
     for task in (stream_task, polling_task):
         task.cancel()
     for task in (stream_task, polling_task):
@@ -99,6 +114,7 @@ app.include_router(monitoring.router, prefix="/api/monitoring", tags=["monitorin
 app.include_router(alerts.router, prefix="/api/alerts", tags=["alerts"])
 app.include_router(data.router, prefix="/api/data", tags=["data"])
 app.include_router(terminal.router, prefix="/api/terminal", tags=["terminal"])
+app.include_router(automation.router, prefix="/api/automation", tags=["automation"])
 
 
 def build_hello_message(stream: StreamEngine) -> dict:
@@ -119,7 +135,7 @@ def build_hello_message(stream: StreamEngine) -> dict:
         "type": "hello",
         "topic": "system/hello",
         "ts": datetime.now().isoformat(timespec="seconds"),
-        "topics": ["metric", "alert", "data_update", "agent"],
+        "topics": ["metric", "alert", "data_update", "agent", "automation"],
         "snapshot": stream.last_snapshot,
         "active_alerts": len(stream.active_alerts),
         "auth": "none",
@@ -193,5 +209,11 @@ async def stream_status():
         "clients": websockets.manager.connection_count,
         "last_snapshot_at": (snapshot or {}).get("timestamp"),
         "active_alerts": len(engine.active_alerts),
-        "topics": ["metric/snapshot", "alert/created", "alert/resolved", "data/updated"],
+        "topics": [
+            "metric/snapshot",
+            "alert/created",
+            "alert/resolved",
+            "data/updated",
+            "automation/run",
+        ],
     }
