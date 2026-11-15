@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { wsBase } from '@/hooks/use-live-data'
 import { cn } from '@/lib/utils'
 
 export type ConnState = 'connecting' | 'live' | 'closed' | 'denied' | 'error'
@@ -103,7 +104,6 @@ function formatDuration(ms: number) {
 
 interface TerminalConsoleProps {
   token: string
-  apiUrl: string
   /** Reports connection lifecycle changes to the page chrome. */
   onStatus: (status: ConnState) => void
   /** Drops the elevated token and returns to the elevation gate. */
@@ -121,7 +121,7 @@ interface TerminalConsoleProps {
  * A close with code 1008 means the control plane rejected the token; that is
  * surfaced as the `denied` state rather than a generic disconnect.
  */
-export function TerminalConsole({ token, apiUrl, onStatus, onLock }: TerminalConsoleProps) {
+export function TerminalConsole({ token, onStatus, onLock }: TerminalConsoleProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const socketRef = useRef<WebSocket | null>(null)
   const onStatusRef = useRef(onStatus)
@@ -240,7 +240,7 @@ export function TerminalConsole({ token, apiUrl, onStatus, onLock }: TerminalCon
       }
 
       /* ---- socket ------------------------------------------------------- */
-      const base = apiUrl.replace(/\/+$/, '').replace(/^http/, 'ws')
+      const base = wsBase()
       const url = `${base}/api/terminal/ws?token=${encodeURIComponent(token)}`
       const ws = new WebSocket(url)
       ws.binaryType = 'arraybuffer'
@@ -339,7 +339,7 @@ export function TerminalConsole({ token, apiUrl, onStatus, onLock }: TerminalCon
       term?.dispose()
       if (container) container.innerHTML = ''
     }
-  }, [apiUrl, token, sessionId])
+  }, [token, sessionId])
 
   /* ------------------------------------------------------------- operators */
   const terminate = useCallback(() => {

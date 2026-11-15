@@ -19,7 +19,29 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+/**
+ * Base for every REST call. Empty means **same origin**: the deployed site
+ * serves the dashboard and the API from one origin (port 3000 reverse-proxies
+ * `/api` and `/ws` to FastAPI), so the browser can use relative URLs and no
+ * host pinning or CORS is involved. Set `NEXT_PUBLIC_API_URL` only to point a
+ * build at a backend that lives on another host.
+ */
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
+
+/**
+ * Absolute `ws://` / `wss://` base for the current page.
+ *
+ * `WebSocket` rejects a relative URL, so when `API_URL` is empty (same origin)
+ * the scheme and host are taken from `window.location` — which also means the
+ * socket automatically follows the page onto https without a rebuild.
+ */
+export function wsBase(): string {
+  const configured = API_URL.replace(/\/+$/, '')
+  if (configured) return configured.replace(/^http/, 'ws')
+  if (typeof window === 'undefined') return 'ws://127.0.0.1:8000'
+  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${scheme}//${window.location.host}`
+}
 
 /**
  * `sessionStorage` key the elevation gate (`/terminal`) writes the operator's
@@ -92,11 +114,10 @@ type MessageSink = (message: LiveMessage) => void
 type StateSink = (state: LiveState) => void
 
 function socketUrl(): string {
-  const base = API_URL.replace(/^http/, 'ws').replace(/\/$/, '')
   // `/ws` carries topology and alert state, so the backend requires at least
   // the OPERATOR role once `NOC_OPERATOR_TOKEN` is configured. Browsers cannot
   // set headers on a WebSocket handshake, hence `?token=`.
-  return withToken(`${base}/ws`)
+  return withToken(`${wsBase()}/ws`)
 }
 
 /** Exponential backoff with jitter, capped. */
