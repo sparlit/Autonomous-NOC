@@ -8,11 +8,13 @@ import { ElevationGate } from '@/components/terminal/elevation-gate'
 import { TerminalConsole, type ConnState } from '@/components/terminal/terminal-console'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+// Single source of truth for where the elevated token lives: the live-data hook
+// reads the same key to authorize `/ws` and the dashboard's REST calls.
+import { TOKEN_STORAGE_KEY } from '@/hooks/use-live-data'
 import './terminal.css'
 import '@xterm/xterm/css/xterm.css'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-const TOKEN_STORAGE_KEY = 'noc.terminal.operator-token'
 
 /**
  * sessionStorage is an external store: read it through useSyncExternalStore so

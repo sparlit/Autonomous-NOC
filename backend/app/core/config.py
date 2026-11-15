@@ -32,6 +32,19 @@ class Settings(BaseSettings):
     #: rather than blocking the EventBus polling loop.
     AUTOMATION_QUEUE_SIZE: int = 200
 
+    # ------------------------------------------------------------------- RBAC
+    #: Administrative shared secret. Grants the terminal WebSocket, manual rule
+    #: execution and the remediation queue. Deliberately empty by default: an
+    #: unset admin token means those surfaces are **disabled** (fail closed), so
+    #: no repository default can ever open a root shell. Set it in the
+    #: environment / ``.env`` for any real deployment.
+    NOC_ADMIN_TOKEN: str = ""
+    #: Read-only shared secret. Grants monitoring, data, alerts and automation
+    #: history. While unset, read endpoints stay open so a fresh clone renders a
+    #: live dashboard; once set, every read surface requires it (or the admin
+    #: token). See :mod:`app.core.auth`.
+    NOC_OPERATOR_TOKEN: str = ""
+
     model_config = ConfigDict(env_file=".env")
 
 

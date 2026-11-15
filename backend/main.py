@@ -5,10 +5,11 @@ import sqlite3
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.endpoints import alerts, automation, data, monitoring, terminal, websockets
+from app.core.auth import Role, auth_status, authorize_websocket, require_role
 from app.core.automation import engine as automation_engine
 from app.core.config import settings
 from app.core.streaming import StreamEngine, engine
@@ -87,6 +88,20 @@ async def lifespan(app: FastAPI):
         websockets.manager.connection_count,
     )
 
+    auth = auth_status()
+    if not auth["admin_configured"]:
+        logger.warning(
+            "RBAC: NOC_ADMIN_TOKEN is not set — privileged surfaces (terminal, "
+            "manual rule runs, pending actions) are DISABLED. Set it in the "
+            "environment to enable them."
+        )
+    if auth["read_endpoints"] == "open":
+        logger.warning(
+            "RBAC: NOC_OPERATOR_TOKEN is not set — read-only endpoints and /ws "
+            "are unauthenticated. Set it (or NOC_ADMIN_TOKEN) for any deployment "
+            "reachable from outside localhost."
+        )
+
     yield
 
     engine.stop()
@@ -117,7 +132,7 @@ app.include_router(terminal.router, prefix="/api/terminal", tags=["terminal"])
 app.include_router(automation.router, prefix="/api/automation", tags=["automation"])
 
 
-def build_hello_message(stream: StreamEngine) -> dict:
+def build_hello_message(stream: StreamEngine, role: str = "anonymous") -> dict:
     """
     Build the first message a client receives after connecting.
 
@@ -127,6 +142,7 @@ def build_hello_message(stream: StreamEngine) -> dict:
 
     Parameters:
         stream (StreamEngine): Engine holding the cached snapshot.
+        role (str): Role the handshake was authorized with (``operator``/``admin``).
 
     Returns:
         dict: ``{"type": "hello", ...}`` websocket message.
@@ -138,7 +154,7 @@ def build_hello_message(stream: StreamEngine) -> dict:
         "topics": ["metric", "alert", "data_update", "agent", "automation"],
         "snapshot": stream.last_snapshot,
         "active_alerts": len(stream.active_alerts),
-        "auth": "none",
+        "auth": role,
     }
 
 
@@ -147,19 +163,25 @@ async def websocket_endpoint(websocket: WebSocket):
     """
     Manage a websocket client connection and keep it registered with the manager.
 
-    Registers the socket, sends a ``hello`` frame describing the stream, then
-    stays in a receive loop so the connection lifecycle is observed and ``ping``
-    frames are answered with ``pong``. The socket is unregistered on disconnect.
+    The handshake is authorized **before** ``accept()``: ``/ws`` carries topology
+    and alert state, so it requires at least the ``OPERATOR`` role (presented as
+    ``?token=``, ``Authorization: Bearer`` or ``X-NOC-Token``). Peers without a
+    valid token are refused during the handshake with code ``1008`` and never
+    join the broadcast fan-out.
 
-    NOTE: ``/ws`` is unauthenticated (unchanged from before this change) — it
-    carries read-only monitoring data. Authentication is tracked as part of the
-    security pass; the terminal surface keeps its own ``?token=`` handshake.
+    Once connected, the socket is registered, sent a ``hello`` frame describing
+    the stream, and kept in a receive loop so ``ping`` frames are answered with
+    ``pong``. The socket is unregistered on disconnect.
 
     Parameters:
         websocket (WebSocket): The client WebSocket connection to manage.
     """
+    role = await authorize_websocket(websocket, Role.OPERATOR)
+    if role is None:
+        return
+
     await websockets.manager.connect(websocket)
-    await websockets.manager.send_to(websocket, build_hello_message(engine))
+    await websockets.manager.send_to(websocket, build_hello_message(engine, role.value))
     try:
         while True:
             raw = await websocket.receive_text()
@@ -188,15 +210,23 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/health")
 async def health_check():
     """
-    Provide a simple health status for the service.
+    Liveness probe — the only unauthenticated surface.
+
+    It reports nothing about the network, the topology or the alert state: just
+    that the process is up, plus whether RBAC is configured (so an operator can
+    see at a glance that a deployment is still running with open read endpoints
+    or with the privileged surfaces disabled).
 
     Returns:
-        dict: JSON-compatible object with `"status": "ok"`.
+        dict: ``{"status": "ok", "auth": {...}}``.
     """
-    return {"status": "ok"}
+    return {"status": "ok", "auth": auth_status()}
 
 
-@app.get("/api/stream/status")
+@app.get(
+    "/api/stream/status",
+    dependencies=[Depends(require_role(Role.OPERATOR))],
+)
 async def stream_status():
     """
     Expose the live stream's health for the dashboard's connection chip.

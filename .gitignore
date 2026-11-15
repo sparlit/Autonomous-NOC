@@ -6,3 +6,7 @@ nanoc/workspace/
 nanoc/staging/
 nanoc_backup/
 .env
+
+# SQLite WAL sidecars (created at runtime by the shared connection)
+*.db-shm
+*.db-wal

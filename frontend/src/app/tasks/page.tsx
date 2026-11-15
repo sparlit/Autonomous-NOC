@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LiveStateChip } from "@/components/live/live-state-chip";
-import { useLiveFeed, API_URL } from "@/hooks/use-live-data";
+import { useLiveFeed, API_URL, authHeaders } from "@/hooks/use-live-data";
 import { CheckCircle2, Clock, AlertCircle } from "lucide-react";
 
 /**
@@ -30,7 +30,7 @@ interface Task {
 }
 
 const fetchTasks = async (): Promise<Task[]> => {
-  const res = await fetch(`${API_URL}/api/data/tasks`);
+  const res = await fetch(`${API_URL}/api/data/tasks`, { headers: authHeaders() });
   if (!res.ok) throw new Error('Failed to fetch tasks');
   return res.json();
 };

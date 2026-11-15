@@ -21,6 +21,48 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+/**
+ * `sessionStorage` key the elevation gate (`/terminal`) writes the operator's
+ * control-plane token to. It is the single place the browser holds a
+ * credential, so the live-data socket and every REST call read it from here.
+ *
+ * The backend treats that token as the **admin** secret, which is a superset of
+ * the read-only role the dashboard needs — so one elevation unlocks both the
+ * shell and the read surfaces when the deployment sets `NOC_OPERATOR_TOKEN`.
+ */
+export const TOKEN_STORAGE_KEY = 'noc.terminal.operator-token'
+
+/** Read the stored token, or `''` when the operator has not elevated. */
+export function storedToken(): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    return window.sessionStorage.getItem(TOKEN_STORAGE_KEY) ?? ''
+  } catch {
+    // Private-mode / disabled storage: behave as "no credential".
+    return ''
+  }
+}
+
+/**
+ * Request headers carrying the stored token, for `fetch()`.
+ *
+ * Empty when nothing is stored, so open (token-less) deployments are unaffected.
+ * A `WebSocket` handshake cannot set headers, so the socket uses `?token=`
+ * instead — see `socketUrl()`.
+ */
+export function authHeaders(): Record<string, string> {
+  const token = storedToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+/** Append the stored token to a WebSocket URL (`?token=` or `&token=`). */
+export function withToken(url: string): string {
+  const token = storedToken()
+  if (!token) return url
+  const separator = url.includes('?') ? '&' : '?'
+  return `${url}${separator}token=${encodeURIComponent(token)}`
+}
+
 export type LiveState = 'connecting' | 'live' | 'reconnecting' | 'down'
 
 export interface LiveMessage {
@@ -51,7 +93,10 @@ type StateSink = (state: LiveState) => void
 
 function socketUrl(): string {
   const base = API_URL.replace(/^http/, 'ws').replace(/\/$/, '')
-  return `${base}/ws`
+  // `/ws` carries topology and alert state, so the backend requires at least
+  // the OPERATOR role once `NOC_OPERATOR_TOKEN` is configured. Browsers cannot
+  // set headers on a WebSocket handshake, hence `?token=`.
+  return withToken(`${base}/ws`)
 }
 
 /** Exponential backoff with jitter, capped. */

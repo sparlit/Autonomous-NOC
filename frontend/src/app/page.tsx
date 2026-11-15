@@ -9,23 +9,23 @@ import NetworkLatencyChart from '@/components/charts/NetworkLatencyChart'
 import ThroughputChart from '@/components/charts/ThroughputChart'
 import DeviceStatusChart from '@/components/charts/DeviceStatusChart'
 import { LiveStateChip } from '@/components/live/live-state-chip'
-import { API_URL } from '@/hooks/use-live-data'
+import { API_URL, authHeaders } from '@/hooks/use-live-data'
 import { useLiveTelemetry, type SeriesSeed } from '@/hooks/use-live-telemetry'
 
 const fetchStatus = async () => {
-  const res = await fetch(`${API_URL}/api/monitoring/status`)
+  const res = await fetch(`${API_URL}/api/monitoring/status`, { headers: authHeaders() })
   if (!res.ok) throw new Error('Failed to fetch status')
   return res.json()
 }
 
 const fetchAlertsSummary = async () => {
-  const res = await fetch(`${API_URL}/api/alerts/summary`)
+  const res = await fetch(`${API_URL}/api/alerts/summary`, { headers: authHeaders() })
   if (!res.ok) throw new Error('Failed to fetch alerts summary')
   return res.json()
 }
 
 const fetchSeries = async (): Promise<SeriesSeed> => {
-  const res = await fetch(`${API_URL}/api/monitoring/series?limit=30`)
+  const res = await fetch(`${API_URL}/api/monitoring/series?limit=30`, { headers: authHeaders() })
   if (!res.ok) throw new Error('Failed to fetch metric series')
   return res.json()
 }

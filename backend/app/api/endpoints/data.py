@@ -1,13 +1,16 @@
 import copy
 from typing import Any, Dict, List
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.core.auth import Role, require_role
 from nanoc.core.config import settings as nanoc_settings
 from nanoc.memory.memory import Memory
 import sqlite3
 
-router = APIRouter()
+#: Topology, agents and tasks are read-only monitoring data: ``OPERATOR`` or
+#: higher (open while ``NOC_OPERATOR_TOKEN`` is unset — see ``app.core.auth``).
+router = APIRouter(dependencies=[Depends(require_role(Role.OPERATOR))])
 memory = Memory(nanoc_settings.DB_PATH)
 
 #: Knowledge key the topology is persisted under.

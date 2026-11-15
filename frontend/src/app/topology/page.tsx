@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import TopologyMap from "@/components/charts/TopologyMap";
 import { LiveStateChip } from "@/components/live/live-state-chip";
 import { useLiveFeed } from "@/hooks/use-live-data";
-import { API_URL } from "@/hooks/use-live-data";
+import { API_URL, authHeaders } from "@/hooks/use-live-data";
 
 interface TopologyNode {
   id: string;
@@ -13,7 +13,7 @@ interface TopologyNode {
 }
 
 const fetchTopology = async (): Promise<{ nodes: TopologyNode[] }> => {
-  const res = await fetch(`${API_URL}/api/data/topology`);
+  const res = await fetch(`${API_URL}/api/data/topology`, { headers: authHeaders() });
   if (!res.ok) throw new Error('Failed to fetch topology');
   return res.json();
 };

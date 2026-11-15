@@ -4,7 +4,7 @@ import React, { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { useLiveFeed, API_URL } from '@/hooks/use-live-data';
+import { useLiveFeed, API_URL, authHeaders } from '@/hooks/use-live-data';
 
 interface TopologyNode {
   id: string;
@@ -20,7 +20,7 @@ interface TopologyEdge {
 }
 
 const fetchTopology = async () => {
-  const res = await fetch(`${API_URL}/api/data/topology`);
+  const res = await fetch(`${API_URL}/api/data/topology`, { headers: authHeaders() });
   if (!res.ok) throw new Error('Failed to fetch topology');
   return res.json();
 };
