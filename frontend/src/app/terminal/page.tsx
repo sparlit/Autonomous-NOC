@@ -14,8 +14,6 @@ import { TOKEN_STORAGE_KEY } from '@/hooks/use-live-data'
 import './terminal.css'
 import '@xterm/xterm/css/xterm.css'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-
 /**
  * sessionStorage is an external store: read it through useSyncExternalStore so
  * the elevation hint survives a refresh without a setState-in-effect cascade.
@@ -163,7 +161,6 @@ export default function TerminalPage() {
           <TerminalConsole
             key="console"
             token={token}
-            apiUrl={API_URL}
             onStatus={handleStatus}
             onLock={lock}
           />

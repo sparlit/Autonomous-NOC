@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Brain, Terminal as TerminalIcon, Cpu } from "lucide-react";
-import { authHeaders, withToken } from "@/hooks/use-live-data";
+import { API_URL, authHeaders, withToken, wsBase } from "@/hooks/use-live-data";
 
 interface Agent {
   id: string;
@@ -33,7 +33,6 @@ interface AgentEvent {
 export default function AgentOperations() {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   useEffect(() => {
     const fetchAgents = async () => {
@@ -43,7 +42,7 @@ export default function AgentOperations() {
     fetchAgents();
 
     // `/ws` is authorized before accept: pass the elevated token when present.
-    const socket = new WebSocket(withToken(`${API_URL.replace('http', 'ws')}/ws`));
+    const socket = new WebSocket(withToken(`${wsBase()}/ws`));
 
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -53,7 +52,7 @@ export default function AgentOperations() {
     };
 
     return () => socket.close();
-  }, [API_URL]);
+  }, []);
 
   return (
     <div className="space-y-6">
